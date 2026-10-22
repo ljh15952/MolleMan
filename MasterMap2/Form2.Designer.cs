@@ -179,7 +179,7 @@
             this.Controls.Add(this.webView21);
             this.Controls.Add(this.statusStrip1);
             this.Name = "Form2";
-            this.Text = "MasterMap";
+            this.Text = "";
             ((System.ComponentModel.ISupportInitialize)(this.webView21)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.trackBarOpacity)).EndInit();
             this.statusStrip1.ResumeLayout(false);
