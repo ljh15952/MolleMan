@@ -1,0 +1,7 @@
+# 줄바꿈 자동 정규화
+* text=auto
+
+# Visual Studio 파일은 CRLF 유지
+*.sln   text eol=crlf
+*.csproj text eol=crlf
+*.cs    text diff=csharp

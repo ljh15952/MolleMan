@@ -1,0 +1,29 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+
+## Visual Studio temporary / user-specific files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+
+## NuGet packages (restored automatically on build)
+packages/
+*.nupkg
+*.snupkg
+
+## Rider / ReSharper
+.idea/
+_ReSharper*/
+*.DotSettings.user
+
+## OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
