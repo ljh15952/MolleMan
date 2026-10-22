@@ -1,0 +1,17 @@
+{
+  "name": "mastermap2-web",
+  "version": "2.0.0",
+  "private": true,
+  "description": "GitHub Codespaces에서 동작하는 원격 Chromium 기반 웹 브라우저",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "^1.64.1",
+    "ws": "^8.22.0"
+  }
+}

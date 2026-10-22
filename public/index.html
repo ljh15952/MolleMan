@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MasterMap2</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <button type="button" id="back" title="뒤로 (W, Alt+←)">←</button>
+    <button type="button" id="forward" title="앞으로 (Alt+→)">→</button>
+    <button type="button" id="reload" title="새로고침 (F5)">⟳</button>
+    <button type="button" id="home" title="홈">Home</button>
+    <form id="address-form" class="address">
+      <input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="URL 또는 검색어 입력">
+      <button type="submit">Go</button>
+    </form>
+  </header>
+
+  <main id="viewport">
+    <canvas id="screen"></canvas>
+    <!-- 키보드·IME 입력을 받기 위한 숨은 입력란 -->
+    <textarea id="keyboard-sink" aria-label="페이지 키보드 입력" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+    <div id="overlay">연결 중…</div>
+  </main>
+
+  <footer class="statusbar">
+    <span id="spinner" class="spinner" hidden></span>
+    <span id="status">준비</span>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
