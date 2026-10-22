@@ -1,4 +1,4 @@
-# MasterMap2
+# GoogleBrowser
 
 **GitHub Codespaces에서 동작하는 웹 브라우저**입니다.
 서버(Codespace)에서 헤드리스 Chromium을 실행하고, 그 화면을 브라우저 탭으로 실시간 스트리밍합니다.
@@ -68,7 +68,7 @@ iframe 방식과 달리 X-Frame-Options 등으로 삽입을 막는 사이트(Bin
 | `server/session.js` | 원격 브라우저 세션: 화면 스트리밍(CDP screencast), 입력 재현, 단축키 |
 | `public/index.html` / `style.css` / `app.js` | 브라우저 UI(툴바, 화면 캔버스, 입력 전달) |
 | `.devcontainer/` | Codespaces 환경 설정과 초기 설치 스크립트 |
-| `MasterMap2/`, `MasterMap2.sln` | 이전 버전(Windows WinForms + WebView2) |
+| `GoogleBrowser/`, `GoogleBrowser.sln` | 이전 버전(Windows WinForms + WebView2) |
 
 ## 제한 사항
 
@@ -79,5 +79,5 @@ iframe 방식과 달리 X-Frame-Options 등으로 삽입을 막는 사이트(Bin
 
 ## 이전 버전 (WinForms)
 
-`MasterMap2/` 폴더에는 Windows 전용 WinForms + WebView2 버전이 그대로 남아 있습니다.
-Visual Studio에서 `MasterMap2.sln`을 열어 빌드할 수 있습니다(.NET Framework 4.6.2, WebView2 Runtime 필요).
+`GoogleBrowser/` 폴더에는 Windows 전용 WinForms + WebView2 버전이 그대로 남아 있습니다.
+Visual Studio에서 `GoogleBrowser.sln`을 열어 빌드할 수 있습니다(.NET Framework 4.6.2, WebView2 Runtime 필요).

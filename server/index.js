@@ -120,7 +120,7 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`MasterMap2 Web 실행 중: http://localhost:${PORT}`);
+  console.log(`GoogleBrowser Web 실행 중: http://localhost:${PORT}`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

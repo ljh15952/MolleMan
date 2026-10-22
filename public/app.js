@@ -65,7 +65,7 @@ function onMessage(msg) {
       if (typeof msg.url === 'string' && document.activeElement !== address) address.value = msg.url;
       if (typeof msg.title === 'string') {
         pageTitle = msg.title;
-        document.title = pageTitle ? `${pageTitle} - MasterMap2` : 'MasterMap2';
+        document.title = pageTitle ? `${pageTitle} - GoogleBrowser` : 'GoogleBrowser';
       }
       if (typeof msg.loading === 'boolean') setLoading(msg.loading);
       else if (spinner.hidden) setStatus(pageTitle || '완료');

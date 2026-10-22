@@ -1,4 +1,4 @@
-﻿namespace MasterMap2
+﻿namespace GoogleBrowser
 {
     partial class Form2
     {

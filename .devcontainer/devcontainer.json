@@ -1,5 +1,5 @@
 {
-  "name": "MasterMap2 Web",
+  "name": "GoogleBrowser Web",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
   "hostRequirements": {
     "memory": "4gb"
@@ -13,7 +13,7 @@
   "forwardPorts": [3000],
   "portsAttributes": {
     "3000": {
-      "label": "MasterMap2",
+      "label": "GoogleBrowser",
       "onAutoForward": "openBrowser"
     }
   }

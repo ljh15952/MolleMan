@@ -6,8 +6,8 @@
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{83712FDB-7ACD-42BD-944C-AECF10186D28}</ProjectGuid>
     <OutputType>WinExe</OutputType>
-    <RootNamespace>MasterMap2</RootNamespace>
-    <AssemblyName>MasterMap2</AssemblyName>
+    <RootNamespace>GoogleBrowser</RootNamespace>
+    <AssemblyName>GoogleBrowser</AssemblyName>
     <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>

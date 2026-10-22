@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Windows.Forms;
 
-namespace MasterMap2
+namespace GoogleBrowser
 {
     static class Program
     {
