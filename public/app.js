@@ -10,8 +10,11 @@ const address = $('address');
 const statusEl = $('status');
 const spinner = $('spinner');
 const overlay = $('overlay');
+const brightness = $('brightness');
+const brightnessValue = $('brightness-value');
 
 const SESSION_KEY = 'mm2-session';
+const BRIGHTNESS_KEY = 'mm2-brightness';
 const MOUSE_BUTTONS = ['left', 'middle', 'right'];
 const RESIZE_DEBOUNCE_MS = 150;
 
@@ -314,6 +317,35 @@ $('address-form').addEventListener('submit', (e) => {
 });
 
 address.addEventListener('focus', () => address.select());
+
+// ===== 밝기 =====
+
+// 원격 화면(캔버스)만 어둡게 한다. 값은 이 브라우저에 기억된다
+function applyBrightness() {
+  const value = Number(brightness.value);
+  canvas.style.filter = value < 100 ? `brightness(${value / 100})` : '';
+  brightnessValue.textContent = `${value}%`;
+}
+
+try {
+  const saved = localStorage.getItem(BRIGHTNESS_KEY);
+  if (saved !== null) brightness.value = saved;
+} catch {
+  // 저장된 값을 읽을 수 없으면 기본값을 쓴다
+}
+applyBrightness();
+
+brightness.addEventListener('input', () => {
+  applyBrightness();
+  try {
+    localStorage.setItem(BRIGHTNESS_KEY, brightness.value);
+  } catch {
+    // 저장할 수 없으면 다음에 열 때 기본값으로 돌아간다
+  }
+});
+
+// 마우스로 조절한 뒤에도 바로 Q/W/A/S를 쓸 수 있도록 페이지로 포커스
+brightness.addEventListener('pointerup', () => sink.focus({ preventScroll: true }));
 
 connect();
 sink.focus({ preventScroll: true });

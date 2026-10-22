@@ -147,8 +147,30 @@ body {
 }
 
 #status {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.brightness {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+}
+
+.brightness input {
+  width: 120px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+#brightness-value {
+  min-width: 3.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .spinner {

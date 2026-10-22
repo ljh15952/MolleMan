@@ -28,6 +28,12 @@
   <footer class="statusbar">
     <span id="spinner" class="spinner" hidden></span>
     <span id="status">준비</span>
+    <!-- 기본 19%는 이전 WinForms 버전의 창 투명도 기본값과 동일 -->
+    <label class="brightness" title="화면 밝기">
+      밝기
+      <input id="brightness" type="range" min="10" max="100" value="19">
+      <output id="brightness-value" for="brightness">19%</output>
+    </label>
   </footer>
 
   <script type="module" src="app.js"></script>
