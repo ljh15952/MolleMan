@@ -61,12 +61,12 @@ export default {
 
     if (!self.pathname.startsWith(PREFIX)) {
       // 페이지의 JS가 만든 '/api/...' 같은 루트 상대 주소는 워커 쪽으로 온다.
-      // Referer로 원래 사이트와 키를 알아내서 /p/ 주소로 보낸다
+      // Referer로 원래 사이트와 키를 알아내서 /p/ 주소로 보낸다(307은 POST를 POST 그대로 다시 보내게 한다)
       const from = parseProxyUrl(request.headers.get('referer') ?? '', self.origin);
       if (from && (await keyMatches(from.key, env.ACCESS_KEY))) {
         try {
           const origin = new URL(from.raw).origin;
-          return Response.redirect(`${self.origin}${PREFIX}${from.key}/${origin}${self.pathname}${self.search}`, 302);
+          return Response.redirect(`${self.origin}${PREFIX}${from.key}/${origin}${self.pathname}${self.search}`, 307);
         } catch {
           // 원래 사이트를 알 수 없으면 아래 404로
         }
@@ -228,16 +228,38 @@ function clientPatch(proxyBase, initialScrollX) {
     });
   }
 
+  // 이 페이지의 원래 사이트(예: https://www.youtube.com). '/results' 같은 루트 상대 주소를 바꿀 때 쓴다
+  const siteOrigin = (() => {
+    try {
+      return location.href.startsWith(proxyBase) ? new URL(location.href.slice(proxyBase.length)).origin : null;
+    } catch {
+      return null;
+    }
+  })();
+
   const px = (value) => {
     try {
       const url = new URL(String(value), document.baseURI);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
-      if (url.origin === location.origin) return value;
+      if (url.origin === location.origin) {
+        // 워커 주소지만 /p/<키>/ 가 빠진 주소(루트 상대 주소)는 원래 사이트의 주소로 본다
+        if (url.href.startsWith(proxyBase) || !siteOrigin) return value;
+        return proxyBase + siteOrigin + url.pathname + url.search + url.hash;
+      }
       return proxyBase + url.href;
     } catch {
       return value;
     }
   };
+
+  // SPA가 주소를 '/results' 처럼 바꾸면 /p/<키>/ 가 빠져 이후의 상대 주소 요청이 모두 어긋나므로 막는다
+  const replaceState = History.prototype.replaceState;
+  for (const name of ['pushState', 'replaceState']) {
+    const original = History.prototype[name];
+    History.prototype[name] = function (state, title, url) {
+      return original.call(this, state, title, url == null ? url : px(url));
+    };
+  }
 
   // ===== 단축키(이전 WinForms 버전과 같음) =====
   // Q: 마우스 커서 위치 클릭, W: 뒤로, A: 위로 스크롤(휠 2칸), S: 아래로 스크롤(휠 5칸).
@@ -299,9 +321,14 @@ function clientPatch(proxyBase, initialScrollX) {
   if (window.navigation) {
     navigation.addEventListener('navigate', (e) => {
       const dest = e.destination.url;
-      if (!e.cancelable || e.formData || new URL(dest).origin === location.origin) return;
+      if (!e.cancelable || e.formData || e.destination.sameDocument || px(dest) === dest) return;
       e.preventDefault();
       location.assign(px(dest));
+    });
+    // 위의 pushState 가로채기를 거치지 않고 주소가 바뀌는 경우(다른 창의 History 함수를 빌려 쓰는 사이트 등)에도
+    // 바뀐 직후 /p/<키>/ 를 다시 붙인다. history.state는 그대로 둔다
+    navigation.addEventListener('currententrychange', () => {
+      if (!location.href.startsWith(proxyBase)) replaceState.call(history, history.state, '', px(location.href));
     });
   }
 
@@ -348,8 +375,14 @@ function clientPatch(proxyBase, initialScrollX) {
   }).observe(document.documentElement, { childList: true, subtree: true });
 
   // 통신
+  // Request 객체를 그대로 복사하면 본문이 스트림이 되어 브라우저가 보내지 못하므로, 본문을 먼저 읽어 새로 만든다
   const fetch = window.fetch;
-  window.fetch = (input, init) => fetch(input instanceof Request ? new Request(px(input.url), input) : px(input), init);
+  window.fetch = async (input, init) => {
+    if (!(input instanceof Request)) return fetch(px(input), init);
+    const body = input.method === 'GET' || input.method === 'HEAD' ? undefined : await input.blob();
+    const { method, headers, credentials, cache, redirect, signal, keepalive } = input;
+    return fetch(px(input.url), { method, headers, body, credentials, cache, redirect, signal, keepalive, ...init });
+  };
   const open = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     return open.call(this, method, px(url), ...rest);
@@ -414,27 +447,35 @@ async function keyMatches(given, expected) {
   return crypto.subtle.timingSafeEqual(a, b);
 }
 
+// 원래 사이트로 넘기지 않는 요청 헤더. 워커 주소·Cloudflare·쿠키에 관한 것이다(쿠키는 워커가 받지도 주지도 않는다).
+// 그 밖의 헤더(API 키 등 사이트가 JS로 붙인 것 포함)는 그대로 넘겨야 API 요청이 거부되지 않는다
+const DROP_REQUEST_HEADERS = ['host', 'cookie', 'origin', 'referer', 'connection', 'accept-encoding', 'cdn-loop', 'x-real-ip'];
+
 function forwardHeaders(incoming, target, proxyOrigin) {
   const headers = new Headers();
-  for (const name of ['accept', 'accept-language', 'content-type', 'range', 'user-agent', 'if-none-match', 'if-modified-since']) {
-    const value = incoming.get(name);
-    if (value) headers.set(name, value);
+  for (const [name, value] of incoming) {
+    if (DROP_REQUEST_HEADERS.includes(name) || name.startsWith('cf-') || name.startsWith('x-forwarded-')) continue;
+    headers.set(name, value);
   }
-  headers.set('referer', originalReferer(incoming.get('referer') ?? '', target, proxyOrigin));
+  const page = originalPage(incoming.get('referer') ?? '', proxyOrigin);
+  // 원래 페이지에서 요청한 것처럼 Referer를 만든다. 이미지 서버가 Referer로 다른 사이트의 퍼가기를 막는 경우가 많다
+  // (예: dcinside 이미지는 dcinside 페이지의 Referer가 있어야 받아진다).
+  // 브라우저 기본 정책처럼 같은 사이트면 전체 주소, 다른 사이트면 origin만 보낸다.
+  // 주소창에서 바로 연 페이지 등은 원래 사이트 안에서 이동한 것처럼 보이게 한다
+  if (!page) headers.set('referer', target.origin + '/');
+  else headers.set('referer', page.origin === target.origin ? page.href : page.origin + '/');
+  // fetch·폼 전송의 Origin도 워커가 아니라 원래 페이지의 사이트로 맞춘다(API가 Origin을 검사한다)
+  if (incoming.has('origin')) headers.set('origin', (page ?? target).origin);
   return headers;
 }
 
-// 원래 페이지에서 요청한 것처럼 Referer를 만든다. 이미지 서버가 Referer로 다른 사이트의 퍼가기를 막는 경우가 많다
-// (예: dcinside 이미지는 dcinside 페이지의 Referer가 있어야 받아진다).
-// 브라우저 기본 정책처럼 같은 사이트면 전체 주소, 다른 사이트면 origin만 보낸다
-function originalReferer(referer, target, proxyOrigin) {
+// 요청을 보낸 페이지(Referer)의 원래 주소. 워커를 거친 페이지가 아니면 null
+function originalPage(referer, proxyOrigin) {
   const from = parseProxyUrl(referer, proxyOrigin);
   try {
-    const page = new URL(from.raw);
-    return page.origin === target.origin ? page.href : page.origin + '/';
+    return from ? new URL(from.raw) : null;
   } catch {
-    // 주소창에서 바로 연 페이지 등은 원래 사이트 안에서 이동한 것처럼 보이게 한다
-    return target.origin + '/';
+    return null;
   }
 }
 
