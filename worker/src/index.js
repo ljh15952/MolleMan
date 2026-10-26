@@ -6,6 +6,9 @@
 
 const PREFIX = '/p/';
 
+// 페이지를 불러온 뒤 가로로 스크롤할 거리(px). 0이면 하지 않는다
+const INITIAL_SCROLL_X = 170;
+
 // 주소에 넣기 때문에 URL에 그대로 쓸 수 있는 문자만 허용한다
 const KEY_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
 
@@ -138,7 +141,7 @@ function rewriteHtml(response, base, ctx) {
     .on('head', {
       element: (el) =>
         el.prepend(
-          `<script>(() => { const __name = (f) => f; (${clientPatch})(${JSON.stringify(ctx.proxyBase)}); })();</script>`,
+          `<script>(() => { const __name = (f) => f; (${clientPatch})(${JSON.stringify(ctx.proxyBase)}, ${INITIAL_SCROLL_X}); })();</script>`,
           { html: true },
         ),
     })
@@ -201,7 +204,20 @@ function rewriteHtml(response, base, ctx) {
 // 브라우저 안에서 실행되는 코드(문자열로 바꿔 페이지에 넣는다). 바깥 변수를 쓰면 안 된다.
 // HTML 속의 주소는 워커가 바꾸지만 JS가 실행 중에 만든 주소(이동·iframe·이미지·fetch)는 못 바꾸므로,
 // 여기서 가로채 워커 주소로 바꾼다. 놓친 주소는 워커의 CSP가 막는다
-function clientPatch(proxyBase) {
+function clientPatch(proxyBase, initialScrollX) {
+  // 페이지를 다 불러오면 가로로 조금 스크롤한다(이전 WinForms 버전과 같은 동작).
+  // 페이지 안에 들어 있는 iframe(광고 등)은 빼고, 앱 화면에 직접 뜬 페이지에서만 한다
+  const isPageFrame = (() => {
+    try {
+      return parent === window || parent.location.origin !== location.origin;
+    } catch {
+      return true;
+    }
+  })();
+  if (isPageFrame && initialScrollX) {
+    addEventListener('load', () => scrollTo(initialScrollX, scrollY));
+  }
+
   const px = (value) => {
     try {
       const url = new URL(String(value), document.baseURI);
