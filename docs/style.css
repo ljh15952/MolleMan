@@ -123,6 +123,14 @@ body {
   transform-origin: 0 0;
 }
 
+#dimmer {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .statusbar {
   display: flex;
   gap: 6px;

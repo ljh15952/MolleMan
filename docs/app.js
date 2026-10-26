@@ -11,6 +11,7 @@ const statusEl = $('status');
 const spinner = $('spinner');
 const brightness = $('brightness');
 const brightnessValue = $('brightness-value');
+const dimmer = $('dimmer');
 
 // ====== 옵션 ======
 // Google은 igu=1을 붙이면 다른 페이지 안(iframe)에 표시하는 것을 허용한다. Bing 첫 화면은 막혀 있다
@@ -162,10 +163,11 @@ address.addEventListener('focus', () => address.select());
 
 // ===== 밝기 =====
 
-// iframe 화면만 어둡게 한다. 값은 이 브라우저에 기억된다
+// iframe 위에 검은 막을 겹쳐 화면만 어둡게 한다. 값은 이 브라우저에 기억된다.
+// iframe에 CSS filter를 걸면 다른 사이트 화면의 일부(이미지 등)에만 적용되는 경우가 있어 쓰지 않는다
 function applyBrightness() {
   const value = Number(brightness.value);
-  frame.style.filter = value < 100 ? `brightness(${value / 100})` : '';
+  dimmer.style.opacity = String(1 - value / 100);
   brightnessValue.textContent = `${value}%`;
 }
 
