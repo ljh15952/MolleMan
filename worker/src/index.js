@@ -215,7 +215,17 @@ function clientPatch(proxyBase, initialScrollX) {
     }
   })();
   if (isPageFrame && initialScrollX) {
-    addEventListener('load', () => scrollTo(initialScrollX, scrollY));
+    addEventListener('load', () => {
+      // 페이지가 화면보다 넓지 않으면 스크롤할 공간이 없으므로, 오른쪽 끝 너머에 보이지 않는 점을 두어 공간을 만든다.
+      // absolute 요소는 배치에 영향을 주지 않고 스크롤 범위만 넓힌다
+      const root = document.documentElement;
+      const spacer = document.createElement('div');
+      spacer.style.cssText = 'position:absolute;top:0;width:1px;height:1px;pointer-events:none;visibility:hidden';
+      spacer.style.left = root.scrollWidth + initialScrollX - 1 + 'px';
+      // body가 position을 가지면 그 기준으로 위치가 잡히므로 <html>에 직접 붙인다
+      root.appendChild(spacer);
+      scrollTo(initialScrollX, scrollY);
+    });
   }
 
   const px = (value) => {
