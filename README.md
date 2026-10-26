@@ -67,7 +67,9 @@ iframe 안을 클릭하면 키 입력이 그 사이트로 가기 때문에, 아�
 
 - 접근 키가 없으면 앱이 iframe에 아무 주소도 넣지 않습니다.
 - [docs/index.html](docs/index.html)의 CSP(`frame-src`) 때문에, iframe에는 워커 주소 말고는 브라우저가 열지 않습니다.
-- 워커가 돌려주는 페이지에는 워커 자신의 CSP(`default-src 'self'`)가 붙습니다. 그래서 페이지의 JS가 만든 주소라도 워커 밖으로는 직접 요청하지 못합니다(이미지·스크립트·fetch·폼 전송 포함).
+- 워커는 페이지에 작은 스크립트를 넣습니다. 이 스크립트가 JS가 실행 중에 만든 주소(`location.href` 이동, iframe·이미지 추가, fetch·XHR)도 워커 주소로 바꿉니다.
+- 그래도 놓친 주소는 워커 자신의 CSP(`default-src 'self'`)가 막습니다. 그래서 워커 밖으로는 직접 요청하지 못합니다. 막힌 iframe 자리에는 "콘텐츠가 차단되었습니다" 화면이 나옵니다.
+- 원래 페이지 주소를 Referer로 보냅니다. Referer를 확인해서 다른 사이트의 퍼가기를 막는 이미지 서버(예: dcinside)도 이미지를 내줍니다.
 - 새 창(팝업)은 막혀 있고, `target="_blank"` 링크도 iframe 안에서 열립니다.
 
 1. [Cloudflare](https://dash.cloudflare.com/sign-up)에 무료 가입합니다.
@@ -86,7 +88,7 @@ iframe 안을 클릭하면 키 입력이 그 사이트로 가기 때문에, 아�
 - 도메인 주소는 `wrangler.toml`의 `routes`에서 바꿉니다. `workers.dev` 주소의 `proxy` 부분은 `name`, 가운데 부분은 Cloudflare 대시보드 **Workers & Pages**의 계정 서브도메인입니다.
 - 내 PC에서 시험: `worker/.dev.vars` 파일에 `ACCESS_KEY=<키>`를 적고 `cd worker` 후 `npx wrangler dev` → `http://localhost:8787/p/<키>/https://example.com`
 - 키는 페이지 주소(`/p/<키>/...`)에 들어갑니다. 워커가 다른 사이트로 Referer를 보내지 않게 막지만, 주소를 남에게 복사해 주면 키도 함께 넘어갑니다.
-- 로그인·쿠키가 필요한 사이트, JS로 화면을 그리는 큰 사이트(Naver, YouTube 등)는 이 방식으로도 대부분 동작하지 않습니다. JS가 만든 다른 사이트 주소는 CSP로 막히므로 일부 기능이 빠질 수 있습니다.
+- 로그인·쿠키가 필요한 사이트, JS로 화면을 그리는 큰 사이트(Naver, YouTube 등)는 이 방식으로도 대부분 동작하지 않습니다. `document.domain`을 쓰는 등 원래 도메인에서만 동작하는 스크립트는 오류가 나서 일부 기능이 빠질 수 있습니다.
 - Google 검색도 워커(Cloudflare 서버)에서 요청하므로, Google이 자동 요청으로 판단해 확인 화면을 띄울 수 있습니다.
 - 페이지 안의 이미지·CSS도 모두 워커를 거치므로 요청 수가 많습니다(무료 플랜은 하루 10만 건).
 

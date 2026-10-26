@@ -95,7 +95,7 @@ export default {
 
     const upstream = await fetch(target, {
       method: request.method,
-      headers: forwardHeaders(request.headers, target),
+      headers: forwardHeaders(request.headers, target, self.origin),
       body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
       redirect: 'manual',
     });
@@ -133,6 +133,15 @@ function rewriteHtml(response, base, ctx) {
   const fix = (value) => proxify(value, docBase, ctx);
 
   let rewriter = new HTMLRewriter()
+    // 페이지의 JS보다 먼저 실행되도록 <head> 맨 앞에 넣는다.
+    // wrangler 번들러가 함수 안에 __name(...) 호출을 끼워 넣으므로 브라우저 쪽에 같은 이름을 만들어 둔다
+    .on('head', {
+      element: (el) =>
+        el.prepend(
+          `<script>(() => { const __name = (f) => f; (${clientPatch})(${JSON.stringify(ctx.proxyBase)}); })();</script>`,
+          { html: true },
+        ),
+    })
     // <base target>도 새 창을 열게 하므로 base는 항상 지운다
     .on('base', {
       element(el) {
@@ -187,6 +196,82 @@ function rewriteHtml(response, base, ctx) {
   }
 
   return rewriter.transform(response);
+}
+
+// 브라우저 안에서 실행되는 코드(문자열로 바꿔 페이지에 넣는다). 바깥 변수를 쓰면 안 된다.
+// HTML 속의 주소는 워커가 바꾸지만 JS가 실행 중에 만든 주소(이동·iframe·이미지·fetch)는 못 바꾸므로,
+// 여기서 가로채 워커 주소로 바꾼다. 놓친 주소는 워커의 CSP가 막는다
+function clientPatch(proxyBase) {
+  const px = (value) => {
+    try {
+      const url = new URL(String(value), document.baseURI);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
+      if (url.origin === location.origin) return value;
+      return proxyBase + url.href;
+    } catch {
+      return value;
+    }
+  };
+
+  // 이동: location.href = 'https://...' , JS가 만든 링크 클릭 등
+  if (window.navigation) {
+    navigation.addEventListener('navigate', (e) => {
+      const dest = e.destination.url;
+      if (!e.cancelable || e.formData || new URL(dest).origin === location.origin) return;
+      e.preventDefault();
+      location.assign(px(dest));
+    });
+  }
+
+  // 요소의 주소 속성
+  const ATTRS = { src: 1, href: 1, action: 1, poster: 1, data: 1 };
+  const setAttribute = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    return setAttribute.call(this, name, ATTRS[String(name).toLowerCase()] ? px(value) : value);
+  };
+  for (const [type, prop] of [
+    [HTMLImageElement, 'src'],
+    [HTMLScriptElement, 'src'],
+    [HTMLIFrameElement, 'src'],
+    [HTMLSourceElement, 'src'],
+    [HTMLMediaElement, 'src'],
+    [HTMLLinkElement, 'href'],
+    [HTMLAnchorElement, 'href'],
+    [HTMLFormElement, 'action'],
+  ]) {
+    const desc = Object.getOwnPropertyDescriptor(type.prototype, prop);
+    if (!desc?.set) continue;
+    Object.defineProperty(type.prototype, prop, {
+      ...desc,
+      set(value) {
+        desc.set.call(this, px(value));
+      },
+    });
+  }
+
+  // innerHTML 등으로 한꺼번에 들어온 요소는 들어온 뒤에 고친다
+  new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        for (const el of [node, ...node.querySelectorAll('[src],[href],[action]')]) {
+          for (const name of ['src', 'href', 'action']) {
+            const value = el.getAttribute(name);
+            if (value !== null && px(value) !== value) setAttribute.call(el, name, px(value));
+          }
+          if (el.getAttribute('target')) el.removeAttribute('target');
+        }
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
+  // 통신
+  const fetch = window.fetch;
+  window.fetch = (input, init) => fetch(input instanceof Request ? new Request(px(input.url), input) : px(input), init);
+  const open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    return open.call(this, method, px(url), ...rest);
+  };
 }
 
 // <style> 안의 CSS는 조각으로 나뉘어 오므로 모았다가 마지막에 한 번에 바꾼다
@@ -247,15 +332,28 @@ async function keyMatches(given, expected) {
   return crypto.subtle.timingSafeEqual(a, b);
 }
 
-function forwardHeaders(incoming, target) {
+function forwardHeaders(incoming, target, proxyOrigin) {
   const headers = new Headers();
   for (const name of ['accept', 'accept-language', 'content-type', 'range', 'user-agent', 'if-none-match', 'if-modified-since']) {
     const value = incoming.get(name);
     if (value) headers.set(name, value);
   }
-  // 원래 사이트 안에서 이동한 것처럼 보이게 한다(Referer 검사하는 사이트 대응)
-  headers.set('referer', target.origin + '/');
+  headers.set('referer', originalReferer(incoming.get('referer') ?? '', target, proxyOrigin));
   return headers;
+}
+
+// 원래 페이지에서 요청한 것처럼 Referer를 만든다. 이미지 서버가 Referer로 다른 사이트의 퍼가기를 막는 경우가 많다
+// (예: dcinside 이미지는 dcinside 페이지의 Referer가 있어야 받아진다).
+// 브라우저 기본 정책처럼 같은 사이트면 전체 주소, 다른 사이트면 origin만 보낸다
+function originalReferer(referer, target, proxyOrigin) {
+  const from = parseProxyUrl(referer, proxyOrigin);
+  try {
+    const page = new URL(from.raw);
+    return page.origin === target.origin ? page.href : page.origin + '/';
+  } catch {
+    // 주소창에서 바로 연 페이지 등은 원래 사이트 안에서 이동한 것처럼 보이게 한다
+    return target.origin + '/';
+  }
 }
 
 function text(body, status) {
