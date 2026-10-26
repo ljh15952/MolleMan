@@ -100,6 +100,55 @@ body {
   }
 }
 
+.key-bar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.key-bar[hidden] {
+  display: none;
+}
+
+.key-bar label {
+  flex: none;
+}
+
+.key-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.key-bar input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.key-bar button {
+  min-width: 32px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.key-bar button:hover {
+  border-color: var(--accent);
+}
+
 #viewport {
   --zoom: 1;
   position: relative;

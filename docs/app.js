@@ -12,6 +12,8 @@ const spinner = $('spinner');
 const brightness = $('brightness');
 const brightnessValue = $('brightness-value');
 const dimmer = $('dimmer');
+const keyForm = $('key-form');
+const keyInput = $('key-input');
 
 // ====== 옵션 ======
 // 사이트는 모두 워커(Cloudflare 서버)를 거쳐 열리는데, Google·Bing 검색은 이런 요청을 봇으로 보고 사람 확인 화면을 띄운다.
@@ -61,13 +63,28 @@ function frameUrl(url) {
   return PROXY_URL.replace(/\/+$/, '') + '/p/' + proxyKey + '/' + url;
 }
 
-function askProxyKey() {
-  const input = prompt('프록시 접근 키를 입력하세요. 키가 없으면 사이트를 열 수 없습니다.', proxyKey);
-  if (input === null) return;
-  proxyKey = input.trim();
-  saveSetting(PROXY_KEY_KEY, proxyKey);
-  if (currentUrl) navigate(currentUrl);
+// 🔑 버튼: 툴바 아래의 키 입력란을 열고 닫는다
+function toggleKeyForm(open = keyForm.hidden) {
+  keyForm.hidden = !open;
+  if (open) {
+    keyInput.value = proxyKey;
+    keyInput.focus();
+    keyInput.select();
+  }
 }
+
+keyForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  proxyKey = keyInput.value.trim();
+  saveSetting(PROXY_KEY_KEY, proxyKey);
+  toggleKeyForm(false);
+  if (currentUrl) navigate(currentUrl);
+});
+
+$('key-cancel').addEventListener('click', () => toggleKeyForm(false));
+keyInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') toggleKeyForm(false);
+});
 
 // 다른 사이트의 현재 주소는 읽을 수 없으므로 주소창의 주소를 다시 연다(기록은 늘리지 않는다)
 function reload() {
@@ -155,7 +172,7 @@ $('back').addEventListener('click', goBack);
 $('forward').addEventListener('click', goForward);
 $('reload').addEventListener('click', reload);
 $('home').addEventListener('click', () => navigate(HOME_URL));
-$('proxy-key').addEventListener('click', askProxyKey);
+$('proxy-key').addEventListener('click', () => toggleKeyForm());
 
 $('address-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -234,5 +251,5 @@ function normalizeUrl(input) {
   }
 }
 
-if (!proxyKey) askProxyKey();
 navigate(HOME_URL);
+if (!proxyKey) toggleKeyForm(true);

@@ -21,6 +21,14 @@
     <button type="button" id="proxy-key" title="프록시 접근 키 설정">🔑</button>
   </header>
 
+  <!-- 🔑 버튼으로 여는 접근 키 입력란. prompt()는 대화상자를 막는 환경(앱 안 브라우저, 일부 WebView)에서 뜨지 않아 쓰지 않는다 -->
+  <form id="key-form" class="key-bar" hidden>
+    <label for="key-input">프록시 접근 키</label>
+    <input id="key-input" type="password" spellcheck="false" autocomplete="off" placeholder="키가 없으면 사이트를 열 수 없습니다">
+    <button type="submit">저장</button>
+    <button type="button" id="key-cancel">취소</button>
+  </form>
+
   <main id="viewport" tabindex="-1">
     <!-- 다른 사이트가 이 페이지 자체를 다른 주소로 바꿔 버리지 못하도록 allow-top-navigation은 주지 않는다.
          새 창은 프록시 밖에서 열리므로 allow-popups도 주지 않는다 -->
