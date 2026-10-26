@@ -8,7 +8,6 @@ routes = [
   { pattern = "protect.ljh240310.date", custom_domain = true },
 ]
 
-[vars]
-# 페이지로 열 수 있는 사이트(쉼표 구분). 'tistory.com'은 하위 도메인(xxx.tistory.com)까지 포함한다.
-# 목록에 없는 사이트(이미지·CSS를 주는 CDN 포함)는 프록시 없이 원래 주소로 보낸다. 비워 두면 모든 사이트를 프록시한다
-ALLOWED_HOSTS = "github.io,tistory.com,ljh240310.date"
+# 접근 키는 저장소에 올리지 않도록 secret으로 넣는다: npx wrangler secret put ACCESS_KEY
+# (영문·숫자·_·- 16자 이상. 설정하지 않으면 워커가 아무 요청도 받지 않는다)
+# 모든 사이트를 대신 가져온다. 페이지 안의 이미지·CSS 등도 전부 워커를 거친다

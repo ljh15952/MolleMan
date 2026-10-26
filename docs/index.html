@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GoogleBrowser</title>
+  <!-- iframe에는 워커(app.js의 PROXY_URL) 주소만 들어갈 수 있게 한다. 코드가 실수로 다른 주소를 넣어도 브라우저가 막는다 -->
+  <meta http-equiv="Content-Security-Policy" content="frame-src https://protect.ljh240310.date">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,15 +18,16 @@
       <input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="URL 또는 검색어 입력">
       <button type="submit">Go</button>
     </form>
-    <button type="button" id="open-tab" title="새 탭에서 열기 (화면이 안 나오는 사이트용)">↗</button>
+    <button type="button" id="proxy-key" title="프록시 접근 키 설정">🔑</button>
   </header>
 
   <main id="viewport" tabindex="-1">
-    <!-- 다른 사이트가 이 페이지 자체를 다른 주소로 바꿔 버리지 못하도록 allow-top-navigation은 주지 않는다 -->
+    <!-- 다른 사이트가 이 페이지 자체를 다른 주소로 바꿔 버리지 못하도록 allow-top-navigation은 주지 않는다.
+         새 창은 프록시 밖에서 열리므로 allow-popups도 주지 않는다 -->
     <iframe
       id="frame"
       title="페이지"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-downloads"
       allow="fullscreen; clipboard-write"
     ></iframe>
   </main>

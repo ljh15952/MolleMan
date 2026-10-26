@@ -20,14 +20,15 @@ const SEARCH_URL = 'https://www.google.com/search?igu=1&q=';
 // 페이지 확대율(이전 WinForms 버전의 ZoomFactor 0.85와 동일)
 const ZOOM = 0.85;
 
-// 삽입을 막는 사이트를 대신 가져다 주는 Cloudflare Worker 주소(worker 폴더). 비워 두면 사이트를 직접 연다.
-// 예: 'https://proxy.ljh15952.workers.dev'
+// 모든 사이트를 대신 가져다 주는 Cloudflare Worker 주소(worker 폴더). 사이트는 항상 이 워커를 거쳐서만 연다.
+// 바꾸면 index.html의 Content-Security-Policy(frame-src)도 같은 주소로 바꿔야 한다
 const PROXY_URL = 'https://protect.ljh240310.date';
 
-// 프록시 없이 직접 여는 사이트(igu=1로 삽입이 허용되는 Google)
-const DIRECT_HOSTS = ['www.google.com', 'google.com'];
-
 const BRIGHTNESS_KEY = 'mm2-brightness';
+
+// 워커 접근 키. 이 파일은 공개되므로 키는 여기에 적지 않고 🔑 버튼으로 입력해 이 브라우저에만 저장한다
+const PROXY_KEY_KEY = 'mm2-proxy-key';
+let proxyKey = loadSetting(PROXY_KEY_KEY) ?? '';
 
 // 마지막으로 주소창·홈으로 연 주소. iframe 안에서 링크로 이동한 주소는 알 수 없다
 let currentUrl = '';
@@ -45,20 +46,30 @@ function navigate(input) {
 
   currentUrl = url;
   address.value = url;
+  if (!proxyKey) {
+    setStatus('🔑 버튼으로 접근 키를 입력해야 사이트를 열 수 있습니다.');
+    return;
+  }
   setLoading(true);
   frame.src = frameUrl(url);
 }
 
-// iframe에 실제로 넣을 주소. 프록시를 설정했으면 워커를 거치게 한다
+// iframe에 실제로 넣을 주소. 항상 워커를 거친다(키가 없을 때는 navigate가 열지 않는다)
 function frameUrl(url) {
-  if (!PROXY_URL || !/^https?:/i.test(url)) return url;
-  if (DIRECT_HOSTS.includes(new URL(url).hostname)) return url;
-  return PROXY_URL.replace(/\/+$/, '') + '/p/' + url;
+  return PROXY_URL.replace(/\/+$/, '') + '/p/' + proxyKey + '/' + url;
+}
+
+function askProxyKey() {
+  const input = prompt('프록시 접근 키를 입력하세요. 키가 없으면 사이트를 열 수 없습니다.', proxyKey);
+  if (input === null) return;
+  proxyKey = input.trim();
+  saveSetting(PROXY_KEY_KEY, proxyKey);
+  if (currentUrl) navigate(currentUrl);
 }
 
 // 다른 사이트의 현재 주소는 읽을 수 없으므로 주소창의 주소를 다시 연다(기록은 늘리지 않는다)
 function reload() {
-  if (!currentUrl) return;
+  if (!currentUrl || !proxyKey) return;
   setLoading(true);
   frame.contentWindow.location.replace(frameUrl(currentUrl));
 }
@@ -88,7 +99,7 @@ frame.addEventListener('load', () => {
 
 function setLoading(loading) {
   spinner.hidden = !loading;
-  setStatus(loading ? '로딩 중…' : '완료 · 화면이 안 나오면 ↗ 버튼으로 새 탭에서 여세요');
+  setStatus(loading ? '로딩 중…' : '완료');
 }
 
 function setStatus(text) {
@@ -136,10 +147,7 @@ $('back').addEventListener('click', goBack);
 $('forward').addEventListener('click', goForward);
 $('reload').addEventListener('click', reload);
 $('home').addEventListener('click', () => navigate(HOME_URL));
-
-$('open-tab').addEventListener('click', () => {
-  if (currentUrl) window.open(currentUrl, '_blank', 'noopener');
-});
+$('proxy-key').addEventListener('click', askProxyKey);
 
 $('address-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -161,35 +169,46 @@ function applyBrightness() {
   brightnessValue.textContent = `${value}%`;
 }
 
-try {
-  const saved = localStorage.getItem(BRIGHTNESS_KEY);
-  if (saved !== null) brightness.value = saved;
-} catch {
-  // 저장된 값을 읽을 수 없으면 기본값을 쓴다
-}
+const savedBrightness = loadSetting(BRIGHTNESS_KEY);
+if (savedBrightness !== null) brightness.value = savedBrightness;
 applyBrightness();
 
 brightness.addEventListener('input', () => {
   applyBrightness();
-  try {
-    localStorage.setItem(BRIGHTNESS_KEY, brightness.value);
-  } catch {
-    // 저장할 수 없으면 다음에 열 때 기본값으로 돌아간다
-  }
+  saveSetting(BRIGHTNESS_KEY, brightness.value);
 });
+
+// 저장된 값을 읽을 수 없으면 null(기본값을 쓴다)
+function loadSetting(name) {
+  try {
+    return localStorage.getItem(name);
+  } catch {
+    return null;
+  }
+}
+
+// 저장할 수 없으면 다음에 열 때 기본값으로 돌아간다
+function saveSetting(name, value) {
+  try {
+    localStorage.setItem(name, value);
+  } catch {
+    // 무시
+  }
+}
 
 // 마우스로 조절한 뒤에도 바로 W를 쓸 수 있도록 슬라이더에서 포커스를 뺀다
 brightness.addEventListener('pointerup', () => viewportEl.focus({ preventScroll: true }));
 
 // ===== 주소 =====
 
-// 주소창 입력 → URL. 스킴이 없으면 https://, 주소로 보이지 않으면 검색어로 취급
+// 주소창 입력 → URL. 스킴이 없으면 https://, 주소로 보이지 않으면 검색어로 취급.
+// 워커는 http/https만 가져오므로 다른 스킴은 받지 않는다
 function normalizeUrl(input) {
   const text = String(input ?? '').trim();
   if (!text) return null;
 
   let candidate;
-  if (/^(https?:\/\/|about:)/i.test(text)) {
+  if (/^https?:\/\//i.test(text)) {
     candidate = text;
   } else if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(text)) {
     candidate = 'http://' + text;
@@ -206,4 +225,5 @@ function normalizeUrl(input) {
   }
 }
 
+if (!proxyKey) askProxyKey();
 navigate(HOME_URL);

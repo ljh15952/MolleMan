@@ -35,3 +35,4 @@ node_modules/
 
 ## Cloudflare Worker 로컬 실행 캐시
 .wrangler/
+.dev.vars
