@@ -239,6 +239,62 @@ function clientPatch(proxyBase, initialScrollX) {
     }
   };
 
+  // ===== 단축키(이전 WinForms 버전과 같음) =====
+  // Q: 마우스 커서 위치 클릭, W: 뒤로, A: 위로 스크롤(휠 2칸), S: 아래로 스크롤(휠 5칸).
+  // 페이지 안을 클릭해 포커스가 여기 있을 때는 keydown으로, 앱 툴바에 포커스가 있을 때는 앱이 보내는 메시지로 받는다
+  const WHEEL_STEP = 100;
+  let mouseX = -1;
+  let mouseY = -1;
+  addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  }, true);
+
+  // 휠처럼 커서 아래에서 스크롤할 수 있는 요소를 찾는다. 없으면 페이지 전체
+  const scrollTarget = () => {
+    for (let el = document.elementFromPoint(mouseX, mouseY); el && el !== document.body; el = el.parentElement) {
+      const { overflowY } = getComputedStyle(el);
+      if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+    }
+    return window;
+  };
+
+  const runHotkey = (key) => {
+    if (key === 'w') {
+      history.back();
+    } else if (key === 'a' || key === 's') {
+      scrollTarget().scrollBy({ top: key === 'a' ? -2 * WHEEL_STEP : 5 * WHEEL_STEP, behavior: 'instant' });
+    } else if (key === 'q') {
+      const el = mouseX >= 0 && document.elementFromPoint(mouseX, mouseY);
+      if (!el) return;
+      const init = { bubbles: true, cancelable: true, view: window, clientX: mouseX, clientY: mouseY, button: 0 };
+      el.dispatchEvent(new PointerEvent('pointerdown', init));
+      el.dispatchEvent(new MouseEvent('mousedown', init));
+      el.focus?.();
+      el.dispatchEvent(new PointerEvent('pointerup', init));
+      el.dispatchEvent(new MouseEvent('mouseup', init));
+      // click()은 링크 이동·체크박스 등 기본 동작까지 실행한다
+      el.click();
+    }
+  };
+
+  addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+    const key = e.key.toLowerCase();
+    if (!['q', 'w', 'a', 's'].includes(key)) return;
+    const t = e.target;
+    if (t?.isContentEditable || /^(input|textarea|select)$/i.test(t?.tagName ?? '')) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    runHotkey(key);
+  }, true);
+
+  if (isPageFrame) {
+    addEventListener('message', (e) => {
+      if (e.source === parent && parent !== window && typeof e.data?.mm2Hotkey === 'string') runHotkey(e.data.mm2Hotkey);
+    });
+  }
+
   // 이동: location.href = 'https://...' , JS가 만든 링크 클릭 등
   if (window.navigation) {
     navigation.addEventListener('navigate', (e) => {

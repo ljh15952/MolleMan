@@ -110,7 +110,8 @@ function setStatus(text) {
 
 // ===== 키보드 =====
 
-// iframe 안을 클릭하면 키 입력이 그 사이트로 가므로, 아래 단축키는 이 페이지(툴바 등)에 포커스가 있을 때만 동작한다
+// iframe 안을 클릭하면 키 입력이 그 사이트로 가므로, 아래 단축키는 이 페이지(툴바 등)에 포커스가 있을 때만 동작한다.
+// Q/W/A/S는 iframe 안에 포커스가 있을 때 워커가 넣은 스크립트가 직접 처리한다
 window.addEventListener('keydown', (e) => {
   if (e.isComposing) return;
 
@@ -134,6 +135,10 @@ window.addEventListener('keydown', (e) => {
     // W: 뒤로 가기(입력란에 포커스가 있을 때는 무시)
     e.preventDefault();
     goBack();
+  } else if ((lower === 'q' || lower === 'a' || lower === 's') && !mod && !e.altKey && !isTyping(e.target)) {
+    // Q: 커서 위치 클릭, A/S: 위/아래 스크롤. 다른 사이트 안은 직접 조작할 수 없으므로 워커가 넣은 스크립트에 부탁한다
+    e.preventDefault();
+    frame.contentWindow?.postMessage({ mm2Hotkey: lower }, new URL(PROXY_URL).origin);
   }
 });
 
