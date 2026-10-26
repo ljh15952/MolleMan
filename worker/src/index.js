@@ -185,6 +185,14 @@ export default {
       headers.delete('content-length');
       const dest = request.headers.get('sec-fetch-dest');
       const inject = !dest || DOCUMENT_DESTS.includes(dest);
+      if (!inject) {
+        // dcinside 댓글처럼 JSON을 text/html로 보내는 API가 있다. HTML로 보고 고치면 JSON 글 안의 src="..."가 바뀌어
+        // 따옴표가 깨지고 JSON을 읽지 못한다(댓글에 디시콘·이미지가 있으면 댓글 전체가 안 나온다). 그런 응답은 그대로 넘긴다.
+        // fetch로 받은 HTML 조각은 페이지에 넣을 때 clientPatch가 주소를 고친다
+        const bytes = new Uint8Array(await upstream.arrayBuffer());
+        const body = looksLikeJson(bytes) ? bytes : rewriteHtml(new Response(bytes), target, ctx, false).body;
+        return new Response(body, { status: upstream.status, headers });
+      }
       return rewriteHtml(new Response(upstream.body, { status: upstream.status, headers }), target, ctx, inject);
     }
 
@@ -742,6 +750,13 @@ function mapBytesAsText(buffer, map) {
   const out = new Uint8Array(result.length);
   for (let i = 0; i < result.length; i++) out[i] = result.charCodeAt(i);
   return out;
+}
+
+// 본문이 (BOM·공백 뒤에) { 나 [ 로 시작하면 JSON으로 본다
+function looksLikeJson(bytes) {
+  let i = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+  while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i++;
+  return bytes[i] === 0x7b || bytes[i] === 0x5b;
 }
 
 // 페이지 안의 주소 → 워커를 거치는 주소. 바꾸면 안 되는 주소(#, data: 등)는 그대로 둔다
