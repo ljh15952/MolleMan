@@ -14,9 +14,10 @@ const brightnessValue = $('brightness-value');
 const dimmer = $('dimmer');
 
 // ====== 옵션 ======
-// Google은 igu=1을 붙이면 다른 페이지 안(iframe)에 표시하는 것을 허용한다. Bing 첫 화면은 막혀 있다
-const HOME_URL = 'https://www.google.com/webhp?igu=1';
-const SEARCH_URL = 'https://www.google.com/search?igu=1&q=';
+// 사이트는 모두 워커(Cloudflare 서버)를 거쳐 열리는데, Google·Bing 검색은 이런 요청을 봇으로 보고 사람 확인 화면을 띄운다.
+// DuckDuckGo의 HTML 버전은 JS 없이 동작해서 워커를 거쳐도 검색 결과가 나온다
+const HOME_URL = 'https://html.duckduckgo.com/html/';
+const SEARCH_URL = 'https://html.duckduckgo.com/html/?q=';
 
 // 페이지 확대율(이전 WinForms 버전의 ZoomFactor 0.85와 동일)
 const ZOOM = 0.85;
@@ -116,7 +117,8 @@ window.addEventListener('keydown', (e) => {
   if (e.isComposing) return;
 
   const mod = e.ctrlKey || e.metaKey;
-  const lower = e.key.toLowerCase();
+  // 자동 완성이 보내는 keydown에는 key가 없다
+  const lower = (e.key ?? '').toLowerCase();
 
   if (e.key === 'F5' || (mod && lower === 'r')) {
     e.preventDefault();

@@ -29,8 +29,8 @@ python -m http.server 8000 --directory docs
 
 ## 사용법
 
-- 주소창에 URL 또는 검색어를 입력하고 Enter 또는 **Go**를 누릅니다. 주소가 아닌 입력은 Google에서 검색합니다.
-- **← → ⟳ Home** 버튼으로 탐색합니다. 시작 페이지는 Google입니다.
+- 주소창에 URL 또는 검색어를 입력하고 Enter 또는 **Go**를 누릅니다. 주소가 아닌 입력은 DuckDuckGo(HTML 버전)에서 검색합니다.
+- **← → ⟳ Home** 버튼으로 탐색합니다. 시작 페이지는 DuckDuckGo 검색 화면입니다.
 - **🔑** 버튼으로 프록시 접근 키를 입력합니다. 키가 저장되어 있지 않으면 페이지를 열 때 자동으로 묻습니다.
 - 하단 상태 표시줄의 **밝기** 슬라이더(10~100%, 기본 19%)로 화면을 어둡게 할 수 있습니다. 마지막 값은 브라우저에 기억됩니다.
 - 페이지는 이전 버전과 같이 0.85배로 축소해서 보여 줍니다.
@@ -55,8 +55,8 @@ python -m http.server 8000 --directory docs
 
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
-| `HOME_URL` | `https://www.google.com/webhp?igu=1` | 시작·Home 페이지 |
-| `SEARCH_URL` | `https://www.google.com/search?igu=1&q=` | 검색 주소 |
+| `HOME_URL` | `https://html.duckduckgo.com/html/` | 시작·Home 페이지 |
+| `SEARCH_URL` | `https://html.duckduckgo.com/html/?q=` | 검색 주소. Google·Bing 검색은 워커를 거치면 사람 확인 화면이 떠서 쓸 수 없습니다 |
 | `ZOOM` | `0.85` | 페이지 확대율(이전 버전과 동일) |
 | `PROXY_URL` | `https://protect.ljh240310.date` | 사이트를 대신 가져다 주는 Cloudflare Worker 주소. 바꾸면 [docs/index.html](docs/index.html)의 `Content-Security-Policy`(`frame-src`)도 같은 주소로 바꿔야 합니다 |
 
@@ -90,10 +90,12 @@ python -m http.server 8000 --directory docs
 - 도메인 주소는 `wrangler.toml`의 `routes`에서 바꿉니다. `workers.dev` 주소의 `proxy` 부분은 `name`, 가운데 부분은 Cloudflare 대시보드 **Workers & Pages**의 계정 서브도메인입니다.
 - 내 PC에서 시험: `worker/.dev.vars` 파일에 `ACCESS_KEY=<키>`를 적고 `cd worker` 후 `npx wrangler dev` → `http://localhost:8787/p/<키>/https://example.com`
 - 키는 페이지 주소(`/p/<키>/...`)에 들어갑니다. 워커가 다른 사이트로 Referer를 보내지 않게 막지만, 주소를 남에게 복사해 주면 키도 함께 넘어갑니다.
-- 로그인·쿠키가 필요한 사이트, JS로 화면을 그리는 큰 사이트(Naver, YouTube 등)는 이 방식으로도 대부분 동작하지 않습니다. `document.domain`을 쓰는 등 원래 도메인에서만 동작하는 스크립트는 오류가 나서 일부 기능이 빠질 수 있습니다.
+- 로그인이 필요한 사이트는 동작하지 않습니다. 서버가 주는 쿠키는 버리고, 페이지의 JS가 만든 쿠키는 그 페이지가 열려 있는 동안만 메모리에 둡니다(모든 사이트가 같은 워커 주소를 쓰므로 쿠키가 섞이고 쌓이는 것을 막기 위해). `document.domain`을 쓰는 등 원래 도메인에서만 동작하는 스크립트는 오류가 나서 일부 기능이 빠질 수 있습니다.
 - YouTube는 검색·목록은 나오지만 영상 재생은 되지 않습니다. 영상 데이터 주소(`googlevideo.com`)가 요청한 IP에 묶여 있는데, 워커는 요청마다 다른 Cloudflare IP로 나가기 때문입니다.
-- Google 검색도 워커(Cloudflare 서버)에서 요청하므로, Google이 자동 요청으로 판단해 확인 화면을 띄울 수 있습니다.
-- 페이지 안의 이미지·CSS도 모두 워커를 거치므로 요청 수가 많습니다(무료 플랜은 하루 10만 건).
+- Google·Bing 검색은 워커를 거친 요청을 자동 요청으로 판단해 사람 확인 화면을 띄웁니다. 그래서 검색은 DuckDuckGo HTML 버전을 씁니다.
+- 페이지 안의 이미지·CSS도 모두 워커를 거치므로 요청 수가 많습니다(무료 플랜은 하루 10만 건). YouTube 같은 큰 사이트는 한 페이지에 수백 건을 씁니다.
+- 키는 페이지 주소에 들어 있어 페이지의 JS가 읽을 수 있습니다. 분석·광고 스크립트가 이 주소를 보내도 워커가 원래 사이트로 넘기기 전에 주소·본문에서 키를 지웁니다. 그래도 키가 새었다고 생각되면 바꾸세요.
+- 서비스 워커와 WebRTC(화상 통화 등)는 막혀 있습니다. 서비스 워커는 모든 사이트가 함께 쓰는 워커 주소를 가로챌 수 있고, WebRTC는 프록시를 거치지 않고 실제 IP로 통신하기 때문입니다.
 
 ## 프로젝트 구조
 
