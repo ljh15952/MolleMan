@@ -286,9 +286,19 @@ function clientPatch(initialScrollX, cookieSites) {
   const appParent = parent;
   // dcinside 등은 자기 사이트의 iframe 안에 들어가는 것을 전제로 parent.location·parent.document를 읽는다.
   // 앱 화면 안에서는 다른 사이트라서 보안 오류로 스크립트가 통째로 멈추므로(메인 검색이 정의되지 않는 등),
-  // 페이지에는 parent가 자기 자신(최상위 창)으로 보이게 한다
+  // 페이지에는 parent가 자기 자신(최상위 창)으로 보이게 한다.
+  // 다만 top은 바꿀 수 없으므로, 광고·분석 스크립트가 흔히 쓰는 'while (w !== top) w = w.parent' 같은 반복은 끝나지 않아
+  // 페이지가 '응답하지 않음'으로 멈춘다. 한 번에(작업이 쉬지 않고) 너무 많이 읽으면 그런 반복으로 보고 진짜 parent를 돌려준다
   if (isPageFrame && appParent !== window) {
-    Object.defineProperty(window, 'parent', { configurable: true, get: () => window });
+    const PARENT_LOOP_LIMIT = 1000;
+    let parentReads = 0;
+    Object.defineProperty(window, 'parent', {
+      configurable: true,
+      get() {
+        if (parentReads === 0) queueMicrotask(() => { parentReads = 0; });
+        return ++parentReads > PARENT_LOOP_LIMIT ? appParent : window;
+      },
+    });
   }
   if (isPageFrame && initialScrollX) {
     addEventListener('load', () => {
