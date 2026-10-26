@@ -362,6 +362,39 @@ function clientPatch(initialScrollX, cookieSites) {
       else jar.set(name, value);
     },
   });
+  // ===== 원래 사이트의 주소를 기대하는 스크립트 =====
+  // 페이지 주소의 호스트는 워커이므로, 원래 도메인을 전제로 한 코드가 오류로 멈추면 그 뒤의 기능(검색 등)이 모두 동작하지 않는다
+  const siteHost = siteOrigin && new URL(siteOrigin).hostname;
+  // document.domain = 'dcinside.com' 은 워커 주소에서 SecurityError가 난다. 원래 도메인이면 넣은 것으로 치고 그 값을 돌려준다
+  const nativeDomain = Object.getOwnPropertyDescriptor(Document.prototype, 'domain');
+  let domain = siteHost;
+  Object.defineProperty(document, 'domain', {
+    configurable: true,
+    get: () => domain ?? nativeDomain.get.call(document),
+    set(value) {
+      const v = String(value).toLowerCase();
+      if (siteHost && (siteHost === v || siteHost.endsWith('.' + v))) domain = v;
+      else nativeDomain.set.call(document, value);
+    },
+  });
+  // dcinside의 crossDomainStorage는 저장소 iframe의 주소를 location.host와 비교해, 같은 사이트면 iframe 없이 localStorage를 쓴다.
+  // 워커 주소에서는 다른 사이트로 보여 <head> 안에서 document.body에 iframe을 넣으려다 멈추므로, 같은 사이트의 주소면 워커 주소로 바꿔 넘긴다
+  let crossDomainStorage;
+  Object.defineProperty(window, 'crossDomainStorage', {
+    configurable: true,
+    get: () => crossDomainStorage,
+    set(fn) {
+      crossDomainStorage = typeof fn !== 'function' ? fn : function (opts) {
+        try {
+          if (opts?.origin && new URL(opts.origin, siteOrigin).hostname === siteHost) opts = { ...opts, origin: location.origin };
+        } catch {
+          // 주소가 아니면 그대로 넘긴다
+        }
+        return fn.call(this, opts);
+      };
+    },
+  });
+
   // 서비스 워커는 워커 주소 전체를 가로챌 수 있다. WebRTC는 CSP를 거치지 않고 실제 IP로 직접 통신한다
   if (window.ServiceWorkerContainer) {
     ServiceWorkerContainer.prototype.register = () => Promise.reject(new DOMException('프록시에서는 쓸 수 없습니다', 'SecurityError'));
