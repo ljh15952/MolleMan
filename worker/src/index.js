@@ -49,8 +49,11 @@ export default {
   async fetch(request, env) {
     const self = new URL(request.url);
 
-    if (!KEY_PATTERN.test(env.ACCESS_KEY ?? '')) {
+    if (!env.ACCESS_KEY) {
       return text('ACCESS_KEY가 설정되지 않았습니다: npx wrangler secret put ACCESS_KEY', 503);
+    }
+    if (!KEY_PATTERN.test(env.ACCESS_KEY)) {
+      return text('ACCESS_KEY 형식이 올바르지 않습니다. 영문·숫자·_·- 만 써서 16자 이상으로 다시 넣으세요: npx wrangler secret put ACCESS_KEY', 503);
     }
 
     if (!self.pathname.startsWith(PREFIX)) {
