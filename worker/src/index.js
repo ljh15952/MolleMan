@@ -12,6 +12,11 @@ const CLIENT_PATH = '/__mm2/client.js';
 // 페이지를 불러온 뒤 가로로 스크롤할 거리(px). 0이면 하지 않는다
 const INITIAL_SCROLL_X = 170;
 
+// 쿠키를 주고받는 사이트(도메인). 서브도메인끼리(gall.·search. 등) 같은 쿠키를 쓴다.
+// 그 밖의 사이트는 쿠키를 버린다. 모든 사이트가 같은 워커 주소를 쓰므로, 다 받으면 브라우저의 쿠키 한도를 넘는다.
+// dcinside는 쿠키(ci_c 등)가 없으면 댓글·검색 요청을 거부한다
+const COOKIE_SITES = ['dcinside.com'];
+
 // 주소에 넣기 때문에 URL에 그대로 쓸 수 있는 문자만 허용한다
 const KEY_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
 
@@ -24,7 +29,8 @@ const STRIP_HEADERS = [
   'cross-origin-opener-policy',
   'cross-origin-embedder-policy',
   'cross-origin-resource-policy',
-  // 다른 도메인(워커)에서 의미가 없어지거나, 모든 사이트가 같은 워커 주소를 쓰므로 다른 사이트까지 망가뜨리는 것
+  // 다른 도메인(워커)에서 의미가 없어지거나, 모든 사이트가 같은 워커 주소를 쓰므로 다른 사이트까지 망가뜨리는 것.
+  // set-cookie는 COOKIE_SITES의 것만 이름을 바꿔 다시 붙인다
   'strict-transport-security',
   'set-cookie',
   'clear-site-data',
@@ -72,8 +78,8 @@ const URL_ATTRS = [
 const DOCUMENT_DESTS = ['document', 'iframe', 'frame', 'embed', 'object'];
 
 // wrangler 번들러가 함수 안에 __name(...) 호출을 끼워 넣으므로 브라우저 쪽에 같은 이름을 만들어 둔다.
-// rewriteSrcset은 워커와 브라우저가 함께 쓴다
-const CLIENT_JS = `(() => { const __name = (f) => f; const rewriteSrcset = ${rewriteSrcset}; (${clientPatch})(${INITIAL_SCROLL_X}); })();`;
+// rewriteSrcset과 쿠키 함수들은 워커와 브라우저가 함께 쓴다
+const CLIENT_JS = `(() => { const __name = (f) => f; const rewriteSrcset = ${rewriteSrcset}; const cookieSite = ${cookieSite}; const siteCookies = ${siteCookies}; const rewriteSetCookie = ${rewriteSetCookie}; (${clientPatch})(${INITIAL_SCROLL_X}, ${JSON.stringify(COOKIE_SITES)}); })();`;
 // 스크립트가 바뀌면 주소도 바뀌게 해서 브라우저에 남은 예전 스크립트를 쓰지 않게 한다
 const CLIENT_VERSION = [...CLIENT_JS].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36);
 
@@ -137,11 +143,14 @@ export default {
       return text('워커 자신의 주소는 열 수 없습니다.', 400);
     }
 
+    // 쿠키를 주고받는 사이트면 그 도메인(예: 'dcinside.com'), 아니면 null
+    const site = cookieSite(target.hostname, COOKIE_SITES);
+
     let upstream;
     try {
       upstream = await fetch(target, {
         method: request.method,
-        headers: forwardHeaders(request.headers, target, self.origin),
+        headers: forwardHeaders(request.headers, target, self.origin, site),
         body: await forwardBody(request, scrub),
         redirect: 'manual',
       });
@@ -151,6 +160,11 @@ export default {
 
     const headers = new Headers(upstream.headers);
     for (const name of STRIP_HEADERS) headers.delete(name);
+    if (site) {
+      for (const cookie of upstream.headers.getSetCookie()) {
+        headers.append('set-cookie', rewriteSetCookie(cookie, site, `${PREFIX}${key}/`));
+      }
+    }
     // 주소에 키가 들어 있으므로 다른 사이트로 가는 요청에는 Referer를 보내지 않게 한다
     headers.set('referrer-policy', 'same-origin');
     headers.set('content-security-policy', CSP);
@@ -250,7 +264,7 @@ function rewriteHtml(response, base, ctx, inject) {
 // 브라우저 안에서 실행되는 코드(문자열로 바꿔 CLIENT_PATH로 내보낸다). 바깥 변수는 rewriteSrcset만 쓸 수 있다.
 // HTML 속의 주소는 워커가 바꾸지만 JS가 실행 중에 만든 주소(이동·iframe·이미지·fetch)는 못 바꾸므로,
 // 여기서 가로채 워커 주소로 바꾼다. 놓친 주소는 워커의 CSP가 막는다
-function clientPatch(initialScrollX) {
+function clientPatch(initialScrollX, cookieSites) {
   // 같은 창에서 두 번 실행되면 단축키 등이 겹치므로 한 번만 한다
   if (window.__mm2) return;
   window.__mm2 = true;
@@ -320,9 +334,16 @@ function clientPatch(initialScrollX) {
 
   // ===== 다른 사이트와 함께 쓰는 것 막기 =====
   // 모든 사이트가 같은 워커 주소를 쓰므로, JS가 만든 쿠키가 사이트마다 쌓이면 요청 헤더가 커져 결국 모든 요청이 실패한다.
-  // 쿠키는 이 페이지가 열려 있는 동안만 메모리에 둔다(서버가 주는 쿠키는 워커가 원래 버린다)
+  // COOKIE_SITES의 쿠키는 워커와 같은 방식(이름 앞에 '<도메인>~')으로 브라우저에 저장하고, 이 사이트의 것만 보이게 한다.
+  // 그 밖의 사이트의 쿠키는 이 페이지가 열려 있는 동안만 메모리에 둔다(서버가 주는 쿠키는 워커가 버린다)
+  const site = siteOrigin && cookieSite(new URL(siteOrigin).hostname, cookieSites);
+  const nativeCookie = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
   const jar = new Map();
-  Object.defineProperty(document, 'cookie', {
+  Object.defineProperty(document, 'cookie', site ? {
+    configurable: true,
+    get: () => siteCookies(nativeCookie.get.call(document), site),
+    set: (text) => nativeCookie.set.call(document, rewriteSetCookie(text, site, new URL(proxyBase).pathname)),
+  } : {
     configurable: true,
     get: () => [...jar].map(([name, value]) => (name ? `${name}=${value}` : value)).join('; '),
     set(text) {
@@ -565,6 +586,38 @@ function rewriteSrcset(value, fix) {
   return out.join(', ');
 }
 
+// ===== 쿠키 =====
+// 쿠키는 워커 주소에 '<도메인>~<이름>' 으로 저장한다. 사이트로 보낼 때는 그 도메인의 것만 골라 원래 이름으로 되돌린다.
+// 아래 세 함수는 브라우저 쪽(clientPatch)에서도 쓰므로 바깥 변수를 쓰면 안 된다
+
+// 'gall.dcinside.com' → 'dcinside.com'. 쿠키를 주고받지 않는 사이트면 null
+function cookieSite(hostname, sites) {
+  return sites.find((domain) => hostname === domain || hostname.endsWith('.' + domain)) ?? null;
+}
+
+// 브라우저가 보낸 Cookie 헤더(또는 document.cookie)에서 그 도메인의 쿠키만 원래 이름으로 꺼낸다
+function siteCookies(header, site) {
+  const prefix = site + '~';
+  return String(header)
+    .split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.startsWith(prefix))
+    .map((s) => s.slice(prefix.length))
+    .join('; ');
+}
+
+// 사이트가 준 Set-Cookie(또는 document.cookie에 넣는 글) → 워커 주소에 저장할 Set-Cookie.
+// Domain·Path는 워커 주소에서 맞지 않으므로 '/p/<키>/' 아래 전체로 바꾼다(다른 사이트로는 워커가 보내지 않는다).
+// 앱 화면(다른 도메인) 속 iframe에서도 저장되도록 SameSite=None·Partitioned로 한다
+function rewriteSetCookie(text, site, path) {
+  const [pair, ...attrs] = String(text).split(';');
+  const eq = pair.indexOf('=');
+  const name = eq < 0 ? '' : pair.slice(0, eq).trim();
+  const value = eq < 0 ? pair.trim() : pair.slice(eq + 1).trim();
+  const kept = attrs.map((a) => a.trim()).filter((a) => /^(expires|max-age|httponly)\b/i.test(a));
+  return [`${site}~${name}=${value}`, ...kept, `Path=${path}`, 'Secure', 'SameSite=None', 'Partitioned'].join('; ');
+}
+
 // <style>·<script> 안의 글은 조각으로 나뉘어 오므로 모았다가 마지막에 한 번에 바꾼다
 class TextRewriter {
   constructor(rewrite) {
@@ -677,15 +730,19 @@ async function forwardBody(request, scrub) {
   return mapBytesAsText(await request.arrayBuffer(), scrub);
 }
 
-// 원래 사이트로 넘기지 않는 요청 헤더. 워커 주소·Cloudflare·쿠키에 관한 것이다(쿠키는 워커가 받지도 주지도 않는다).
+// 원래 사이트로 넘기지 않는 요청 헤더. 워커 주소·Cloudflare·쿠키에 관한 것이다(쿠키는 그 사이트의 것만 골라 다시 붙인다).
 // 그 밖의 헤더(API 키 등 사이트가 JS로 붙인 것 포함)는 그대로 넘겨야 API 요청이 거부되지 않는다
 const DROP_REQUEST_HEADERS = ['host', 'cookie', 'origin', 'referer', 'connection', 'accept-encoding', 'cdn-loop', 'x-real-ip', 'content-length'];
 
-function forwardHeaders(incoming, target, proxyOrigin) {
+function forwardHeaders(incoming, target, proxyOrigin, site) {
   const headers = new Headers();
   for (const [name, value] of incoming) {
     if (DROP_REQUEST_HEADERS.includes(name) || name.startsWith('cf-') || name.startsWith('x-forwarded-')) continue;
     headers.set(name, value);
+  }
+  if (site) {
+    const cookie = siteCookies(incoming.get('cookie') ?? '', site);
+    if (cookie) headers.set('cookie', cookie);
   }
   const page = originalPage(incoming.get('referer') ?? '', proxyOrigin);
   // 원래 페이지에서 요청한 것처럼 Referer를 만든다. 이미지 서버가 Referer로 다른 사이트의 퍼가기를 막는 경우가 많다
