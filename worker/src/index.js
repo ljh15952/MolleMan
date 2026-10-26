@@ -282,6 +282,14 @@ function clientPatch(initialScrollX, cookieSites) {
       return true;
     }
   })();
+  // 앱 화면(다른 사이트). 단축키 메시지를 받을 때 쓴다
+  const appParent = parent;
+  // dcinside 등은 자기 사이트의 iframe 안에 들어가는 것을 전제로 parent.location·parent.document를 읽는다.
+  // 앱 화면 안에서는 다른 사이트라서 보안 오류로 스크립트가 통째로 멈추므로(메인 검색이 정의되지 않는 등),
+  // 페이지에는 parent가 자기 자신(최상위 창)으로 보이게 한다
+  if (isPageFrame && appParent !== window) {
+    Object.defineProperty(window, 'parent', { configurable: true, get: () => window });
+  }
   if (isPageFrame && initialScrollX) {
     addEventListener('load', () => {
       // 페이지가 화면보다 넓지 않으면 스크롤할 공간이 없으므로, 오른쪽 끝 너머에 보이지 않는 점을 두어 공간을 만든다.
@@ -456,7 +464,7 @@ function clientPatch(initialScrollX, cookieSites) {
 
   if (isPageFrame) {
     addEventListener('message', (e) => {
-      if (e.source === parent && parent !== window && typeof e.data?.mm2Hotkey === 'string') runHotkey(e.data.mm2Hotkey);
+      if (e.source === appParent && appParent !== window && typeof e.data?.mm2Hotkey === 'string') runHotkey(e.data.mm2Hotkey);
     });
   }
 
