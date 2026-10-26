@@ -314,6 +314,8 @@ function clientPatch(initialScrollX, cookieSites) {
   })();
 
   const px = (value) => {
+    // 이미 바꾼 주소(워커가 HTML에서 바꾼 것 대부분)는 URL을 해석하지 않고 바로 돌려준다
+    if (typeof value === 'string' && value.startsWith(proxyBase)) return value;
     try {
       const url = new URL(String(value), document.baseURI);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
@@ -562,16 +564,30 @@ function clientPatch(initialScrollX, cookieSites) {
     }
     if (el.getAttribute('target')) el.removeAttribute('target');
   };
+  // 페이지를 읽는 동안에는 요소가 하나씩 들어오므로 기록이 수천 개 쌓인다. 부모를 querySelectorAll로 볼 때 자식도 이미 봤으므로
+  // 같은 요소를 다시 보지 않는다(그러지 않으면 깊이만큼 반복되어 페이지가 수백 ms씩 멈추고 클릭도 먹지 않는다)
+  const fixStyle = (el) => {
+    const value = el.getAttribute('style');
+    if (value === null || !value.includes('url(')) return;
+    const fixed = cssPx(value);
+    if (fixed !== value) setAttribute.call(el, 'style', fixed);
+  };
   new MutationObserver((records) => {
+    const seen = new Set();
     for (const record of records) {
       if (record.type === 'attributes') {
-        fixElement(record.target);
+        // style만 지켜보므로 style만 고친다(애니메이션은 이것을 매 프레임 바꾼다)
+        fixStyle(record.target);
         continue;
       }
       for (const node of record.addedNodes) {
-        if (node.nodeType !== 1) continue;
+        if (node.nodeType !== 1 || seen.has(node) || !node.isConnected) continue;
         fixElement(node);
-        for (const el of node.querySelectorAll('[src],[href],[action],[formaction],[srcset],[style],[target],style')) fixElement(el);
+        for (const el of node.querySelectorAll('[src],[href],[action],[formaction],[srcset],[style],[target],style')) {
+          if (!seen.has(el)) fixElement(el);
+        }
+        // 이 요소 밑의 요소가 나중 기록에 나와도 위에서 이미 봤다
+        for (const el of node.getElementsByTagName('*')) seen.add(el);
       }
     }
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
