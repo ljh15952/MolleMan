@@ -32,3 +32,6 @@ Thumbs.db
 node_modules/
 # 로컬 테스트용 npm 캐시·임시 파일
 .local/
+
+## Cloudflare Worker 로컬 실행 캐시
+.wrangler/

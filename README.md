@@ -57,14 +57,35 @@ iframe 안을 클릭하면 키 입력이 그 사이트로 가기 때문에, 아�
 | `HOME_URL` | `https://www.google.com/webhp?igu=1` | 시작·Home 페이지 |
 | `SEARCH_URL` | `https://www.google.com/search?igu=1&q=` | 검색 주소 |
 | `ZOOM` | `0.85` | 페이지 확대율(이전 버전과 동일) |
+| `PROXY_URL` | `https://protect.ljh240310.date` | 삽입을 막는 사이트를 대신 가져다 주는 Cloudflare Worker 주소. 비우면 사용하지 않음 |
 
 Google은 주소에 `igu=1`이 있어야 iframe 안에 표시됩니다. 이전 버전에서 쓰던 Bing은 첫 화면이 삽입을 막아서 Google로 바꿨습니다.
+
+## 프록시(Cloudflare Worker)로 삽입 막힌 사이트 열기
+
+정적인 블로그·문서 사이트 중 삽입을 막아 둔 곳은 [worker/](worker) 폴더의 Cloudflare Worker를 거치면 열 수 있습니다.
+워커가 페이지를 대신 가져오면서 삽입을 막는 헤더(`X-Frame-Options`, CSP)를 지우고, 페이지 안의 링크·이미지·CSS 주소를 워커 주소로 바꿉니다.
+Google 검색·홈은 원래대로 직접 엽니다.
+
+1. [Cloudflare](https://dash.cloudflare.com/sign-up)에 무료 가입합니다.
+2. [worker/wrangler.toml](worker/wrangler.toml)의 `ALLOWED_HOSTS`에 열 사이트를 적습니다. 지금은 GitHub Pages(`github.io`), 티스토리(`tistory.com`), `ljh240310.date`입니다. 목록 밖 사이트(블로그 CDN의 이미지·CSS 포함)는 프록시 없이 원래 주소로 열립니다. 비워 두면 모든 사이트가 열려 남이 범용 프록시로 쓸 수 있습니다.
+3. 배포합니다. 처음에는 브라우저가 열리며 Cloudflare 로그인을 묻습니다.
+   ```bash
+   cd worker
+   npx wrangler deploy
+   ```
+4. 워커는 `https://protect.ljh240310.date`에서 열립니다([docs/app.js](docs/app.js)의 `PROXY_URL`에 이미 들어 있음). 이 도메인의 DNS가 Cloudflare에 있어야 하며, DNS 레코드와 인증서는 배포할 때 자동으로 만들어집니다. 도메인을 쓰지 않으려면 `wrangler.toml`의 `routes`를 지우고, 출력된 `workers.dev` 주소를 `PROXY_URL`에 넣습니다.
+
+- 도메인 주소는 `wrangler.toml`의 `routes`에서 바꿉니다. `workers.dev` 주소의 `proxy` 부분은 `name`, 가운데 부분은 Cloudflare 대시보드 **Workers & Pages**의 계정 서브도메인입니다.
+- 내 PC에서 시험: `cd worker` 후 `npx wrangler dev` → `http://localhost:8787/p/https://example.com`
+- 로그인·쿠키가 필요한 사이트, JS로 화면을 그리는 큰 사이트(Naver, YouTube 등)는 이 방식으로도 대부분 동작하지 않습니다.
 
 ## 프로젝트 구조
 
 | 파일 | 설명 |
 |------|------|
 | `docs/index.html` / `style.css` / `app.js` | 브라우저 UI 전체. GitHub Pages가 이 폴더를 그대로 공개합니다 |
+| `worker/` | 삽입 막힌 사이트용 프록시(Cloudflare Worker, 선택) |
 | `docs/.nojekyll` | GitHub Pages의 Jekyll 변환을 끄는 빈 파일 |
 | `GoogleBrowser/`, `GoogleBrowser.sln` | 이전 버전(Windows WinForms + WebView2) |
 

@@ -20,6 +20,13 @@ const SEARCH_URL = 'https://www.google.com/search?igu=1&q=';
 // 페이지 확대율(이전 WinForms 버전의 ZoomFactor 0.85와 동일)
 const ZOOM = 0.85;
 
+// 삽입을 막는 사이트를 대신 가져다 주는 Cloudflare Worker 주소(worker 폴더). 비워 두면 사이트를 직접 연다.
+// 예: 'https://proxy.ljh15952.workers.dev'
+const PROXY_URL = 'https://protect.ljh240310.date';
+
+// 프록시 없이 직접 여는 사이트(igu=1로 삽입이 허용되는 Google)
+const DIRECT_HOSTS = ['www.google.com', 'google.com'];
+
 const BRIGHTNESS_KEY = 'mm2-brightness';
 
 // 마지막으로 주소창·홈으로 연 주소. iframe 안에서 링크로 이동한 주소는 알 수 없다
@@ -39,14 +46,21 @@ function navigate(input) {
   currentUrl = url;
   address.value = url;
   setLoading(true);
-  frame.src = url;
+  frame.src = frameUrl(url);
+}
+
+// iframe에 실제로 넣을 주소. 프록시를 설정했으면 워커를 거치게 한다
+function frameUrl(url) {
+  if (!PROXY_URL || !/^https?:/i.test(url)) return url;
+  if (DIRECT_HOSTS.includes(new URL(url).hostname)) return url;
+  return PROXY_URL.replace(/\/+$/, '') + '/p/' + url;
 }
 
 // 다른 사이트의 현재 주소는 읽을 수 없으므로 주소창의 주소를 다시 연다(기록은 늘리지 않는다)
 function reload() {
   if (!currentUrl) return;
   setLoading(true);
-  frame.contentWindow.location.replace(currentUrl);
+  frame.contentWindow.location.replace(frameUrl(currentUrl));
 }
 
 // iframe 안에서 이동한 기록도 이 페이지의 브라우저 기록에 함께 쌓이므로 history로 뒤로/앞으로 간다.
