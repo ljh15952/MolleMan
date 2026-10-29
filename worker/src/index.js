@@ -183,6 +183,9 @@ export default {
 
     if (type.includes('text/html')) {
       headers.delete('content-length');
+      // 같은 주소라도 페이지로 열면 스크립트를 넣고 fetch로 받으면 넣지 않으므로, 브라우저 캐시에 따로 저장하게 한다.
+      // 그러지 않으면 fetch로 받아 둔 것을 iframe이 꺼내 써서 clientPatch 없이 열린다
+      headers.append('vary', 'sec-fetch-dest');
       const dest = request.headers.get('sec-fetch-dest');
       const inject = !dest || DOCUMENT_DESTS.includes(dest);
       if (!inject) {
@@ -193,6 +196,12 @@ export default {
         const body = looksLikeJson(bytes) ? bytes : rewriteHtml(new Response(bytes), target, ctx, false).body;
         return new Response(body, { status: upstream.status, headers });
       }
+      // 페이지에는 clientPatch의 버전이 든 주소가 들어간다. 원래 사이트의 캐시 설정대로 브라우저가 페이지를 저장하면
+      // 워커를 다시 배포해도 예전 clientPatch를 계속 쓰므로, 매번 새로 받게 한다(조건부 요청도 원래 사이트의 304가 오므로 막는다)
+      headers.set('cache-control', 'no-cache');
+      headers.delete('etag');
+      headers.delete('last-modified');
+      headers.delete('expires');
       return rewriteHtml(new Response(upstream.body, { status: upstream.status, headers }), target, ctx, inject);
     }
 
@@ -277,8 +286,12 @@ function clientPatch(initialScrollX, cookieSites) {
   if (window.__mm2) return;
   window.__mm2 = true;
 
-  // '<워커>/p/<키>/'. 이 스크립트에는 키가 들어 있지 않으므로 페이지 주소에서 알아낸다
-  const proxyBase = /^https?:\/\/[^/]+\/p\/[^/]+\//.exec(location.href)?.[0];
+  // srcdoc iframe에 이 스크립트를 넣을 때 쓴다
+  const clientSrc = document.currentScript?.src;
+  // '<워커>/p/<키>/'. 이 스크립트에는 키가 들어 있지 않으므로 페이지 주소에서 알아낸다.
+  // srcdoc iframe(about:srcdoc)은 자기 주소가 없으므로, 넣은 페이지에게서 물려받는 기준 주소를 쓴다
+  const pageUrl = /^https?:/.test(location.href) ? location.href : document.baseURI;
+  const proxyBase = /^https?:\/\/[^/]+\/p\/[^/]+\//.exec(pageUrl)?.[0];
   if (!proxyBase) return;
 
   // 페이지를 다 불러오면 가로로 조금 스크롤한다(이전 WinForms 버전과 같은 동작).
@@ -325,7 +338,7 @@ function clientPatch(initialScrollX, cookieSites) {
   // 이 페이지의 원래 사이트(예: https://www.youtube.com). '/results' 같은 루트 상대 주소를 바꿀 때 쓴다
   const siteOrigin = (() => {
     try {
-      return new URL(location.href.slice(proxyBase.length)).origin;
+      return new URL(pageUrl.slice(proxyBase.length)).origin;
     } catch {
       return null;
     }
@@ -515,7 +528,12 @@ function clientPatch(initialScrollX, cookieSites) {
   }
 
   // ===== 요소의 주소 =====
-  const ATTRS = { src: px, href: px, action: px, formaction: px, poster: px, data: px, srcset: (v) => rewriteSrcset(v, px), style: cssPx };
+  // srcdoc의 HTML은 주소를 바꾸고 이 스크립트를 맨 앞(<!DOCTYPE> 뒤)에 넣는다. 그래야 그 안의 JS가 만든 주소도 바뀐다
+  const srcdocPx = (html) => {
+    const fixed = htmlPx(html);
+    return clientSrc ? fixed.replace(/^(\s*<!doctype[^>]*>)?/i, (doctype) => `${doctype}<script src="${clientSrc}"></script>`) : fixed;
+  };
+  const ATTRS = { src: px, href: px, action: px, formaction: px, poster: px, data: px, srcset: (v) => rewriteSrcset(v, px), style: cssPx, srcdoc: srcdocPx };
   const setAttribute = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function (name, value) {
     const fix = ATTRS[String(name).toLowerCase()];
@@ -539,6 +557,7 @@ function clientPatch(initialScrollX, cookieSites) {
     [HTMLAnchorElement, 'href', px],
     [HTMLFormElement, 'action', px],
     [HTMLObjectElement, 'data', px],
+    [HTMLIFrameElement, 'srcdoc', srcdocPx],
   ]) {
     const desc = Object.getOwnPropertyDescriptor(type.prototype, prop);
     if (!desc?.set) continue;
@@ -559,8 +578,15 @@ function clientPatch(initialScrollX, cookieSites) {
     // 빈 주소는 페이지 자신의 주소로 바뀌므로 그대로 둔다
     return value.trim() ? sp + name + eq + q + ATTRS[name.toLowerCase()](value) + q : all;
   });
-  const htmlPx = (html) => String(html).replace(/(<script\b[^>]*>)[\s\S]*?(?:<\/script\s*>|$)|<[a-z][^>]*>/gi, (match, scriptTag) =>
-    scriptTag ? tagPx(scriptTag) + match.slice(scriptTag.length) : tagPx(match));
+  // <style> 안의 url(...)도 바꾼다(광고가 document.write로 넣는 배경 이미지 등)
+  const htmlPx = (html) => String(html).replace(
+    /(<script\b[^>]*>)[\s\S]*?(?:<\/script\s*>|$)|(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>|$)|<[a-z][^>]*>/gi,
+    (match, scriptTag, styleTag, css, styleEnd) => {
+      if (scriptTag) return tagPx(scriptTag) + match.slice(scriptTag.length);
+      if (styleTag) return styleTag + cssPx(css) + styleEnd;
+      return tagPx(match);
+    },
+  );
   for (const [type, prop] of [[Element, 'innerHTML'], [Element, 'outerHTML'], [window.ShadowRoot, 'innerHTML']]) {
     const desc = type && Object.getOwnPropertyDescriptor(type.prototype, prop);
     if (!desc?.set) continue;
@@ -585,6 +611,35 @@ function clientPatch(initialScrollX, cookieSites) {
     Document.prototype[name] = function (...parts) {
       return original.apply(this, parts.map(htmlPx));
     };
+  }
+  // 광고(카카오 ba.min.js 등)는 빈 iframe(about:blank)을 만들어 contentDocument.write로 광고 HTML을 써 넣는다.
+  // 그 iframe은 워커를 거치지 않아 이 스크립트가 없으므로, 페이지가 iframe 안을 꺼내 쓸 때 그 창의 write도 바꿔 둔다.
+  // 그 iframe이 나중에 프록시 페이지로 이동하면 그 페이지의 이 스크립트가 다시 실행된다(바꾼 주소는 다시 바꿔도 같다)
+  const patchFrame = (win) => {
+    try {
+      if (!win || win === window || win.__mm2 || win.__mm2Write) return;
+      win.__mm2Write = true;
+      for (const name of ['write', 'writeln']) {
+        const original = win.Document.prototype[name];
+        win.Document.prototype[name] = function (...parts) {
+          return original.apply(this, parts.map(htmlPx));
+        };
+      }
+    } catch {
+      // 다른 사이트의 창은 건드릴 수 없다(어차피 워커 주소가 아니다)
+    }
+  };
+  for (const prop of ['contentWindow', 'contentDocument']) {
+    const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, prop);
+    if (!desc?.get) continue;
+    Object.defineProperty(HTMLIFrameElement.prototype, prop, {
+      ...desc,
+      get() {
+        const value = desc.get.call(this);
+        patchFrame(prop === 'contentWindow' ? value : value?.defaultView);
+        return value;
+      },
+    });
   }
 
   // JS로 넣는 스타일(CSS-in-JS의 insertRule 등). el.style.backgroundImage = ... 처럼 속성으로 넣는 것은
