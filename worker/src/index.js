@@ -338,8 +338,9 @@ function clientPatch(initialScrollX, cookieSites) {
       const url = new URL(String(value), document.baseURI);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
       if (url.origin === location.origin) {
-        // 워커 주소지만 /p/<키>/ 가 빠진 주소(루트 상대 주소)는 원래 사이트의 주소로 본다
-        if (url.href.startsWith(proxyBase) || url.pathname.startsWith('/__mm2/') || !siteOrigin) return value;
+        // 워커 주소지만 /p/<키>/ 가 빠진 주소(루트 상대 주소)는 원래 사이트의 주소로 본다.
+        // /cdn-cgi/ 는 Cloudflare가 워커 도메인에 넣는 스크립트(Web Analytics 등)가 보내는 것이라 원래 사이트로 보내면 404가 난다
+        if (url.href.startsWith(proxyBase) || url.pathname.startsWith('/__mm2/') || url.pathname.startsWith('/cdn-cgi/') || !siteOrigin) return value;
         return proxyBase + siteOrigin + url.pathname + url.search + url.hash;
       }
       return proxyBase + url.href;
@@ -549,6 +550,43 @@ function clientPatch(initialScrollX, cookieSites) {
     });
   }
 
+  // innerHTML·document.write 등으로 넣는 HTML 글. 요소가 만들어지는 순간 이미지 등을 받기 시작하므로
+  // 아래 MutationObserver가 고치기 전에 CSP에 막힌다(카카오 광고 safeframe의 document.write 등). 넣기 전에 글에서 주소를 바꾼다.
+  // 태그 안의 속성만 바꾸고, <script> 안의 글('"<img src=" + x + ">"' 같은 JS)은 건드리지 않는다
+  const tagPx = (tag) => tag.replace(/(\s)(src|href|action|formaction|poster|srcset)(\s*=\s*)("[^"]*"|'[^']*'|[^\s"'>]+)/gi, (all, sp, name, eq, raw) => {
+    const q = raw[0] === '"' || raw[0] === "'" ? raw[0] : '';
+    const value = q ? raw.slice(1, -1) : raw;
+    // 빈 주소는 페이지 자신의 주소로 바뀌므로 그대로 둔다
+    return value.trim() ? sp + name + eq + q + ATTRS[name.toLowerCase()](value) + q : all;
+  });
+  const htmlPx = (html) => String(html).replace(/(<script\b[^>]*>)[\s\S]*?(?:<\/script\s*>|$)|<[a-z][^>]*>/gi, (match, scriptTag) =>
+    scriptTag ? tagPx(scriptTag) + match.slice(scriptTag.length) : tagPx(match));
+  for (const [type, prop] of [[Element, 'innerHTML'], [Element, 'outerHTML'], [window.ShadowRoot, 'innerHTML']]) {
+    const desc = type && Object.getOwnPropertyDescriptor(type.prototype, prop);
+    if (!desc?.set) continue;
+    Object.defineProperty(type.prototype, prop, {
+      ...desc,
+      set(value) {
+        // <script>·<style>의 innerHTML은 HTML이 아니다
+        desc.set.call(this, this.tagName === 'SCRIPT' || this.tagName === 'STYLE' ? value : htmlPx(value));
+      },
+    });
+  }
+  const insertAdjacentHTML = Element.prototype.insertAdjacentHTML;
+  Element.prototype.insertAdjacentHTML = function (position, html) {
+    return insertAdjacentHTML.call(this, position, htmlPx(html));
+  };
+  const createContextualFragment = Range.prototype.createContextualFragment;
+  Range.prototype.createContextualFragment = function (html) {
+    return createContextualFragment.call(this, htmlPx(html));
+  };
+  for (const name of ['write', 'writeln']) {
+    const original = Document.prototype[name];
+    Document.prototype[name] = function (...parts) {
+      return original.apply(this, parts.map(htmlPx));
+    };
+  }
+
   // JS로 넣는 스타일(CSS-in-JS의 insertRule 등). el.style.backgroundImage = ... 처럼 속성으로 넣는 것은
   // Chrome에서 가로챌 수 없으므로 아래 MutationObserver가 style 속성이 바뀐 직후에 고친다
   const setProperty = CSSStyleDeclaration.prototype.setProperty;
@@ -632,6 +670,39 @@ function clientPatch(initialScrollX, cookieSites) {
     if (!window[name]) continue;
     window[name] = new Proxy(window[name], { construct: (Type, [url, ...rest]) => new Type(px(url), ...rest) });
   }
+
+  // ===== 창 사이의 메시지 =====
+  // 프록시를 거친 창은 모두 워커 주소이므로, postMessage(msg, 'https://gall.dcinside.com') 처럼 원래 사이트를 지정하면
+  // 받는 창의 주소와 맞지 않아 메시지가 버려진다(dcinside의 crossDomainStorage 등). 원래 사이트의 주소는 워커 주소로 바꾼다.
+  // 받는 쪽 스크립트가 보낸 창을 호출하므로 이 창의 postMessage를 바꾼다
+  const fixTargetOrigin = (origin) => {
+    if (typeof origin !== 'string' || origin === '*' || origin === '/') return origin;
+    try {
+      return new URL(origin).origin === location.origin ? origin : location.origin;
+    } catch {
+      return origin;
+    }
+  };
+  const postMessage = window.postMessage;
+  window.postMessage = function (message, options, ...rest) {
+    const fixed = options && typeof options === 'object' ? { ...options, targetOrigin: fixTargetOrigin(options.targetOrigin) } : fixTargetOrigin(options);
+    return postMessage.call(this, message, fixed, ...rest);
+  };
+  // 받는 쪽은 e.origin이 원래 사이트인지 확인하므로(예: /(^|\.)dcinside\.com$/), 워커 주소에서 온 메시지는 보낸 창의 원래 사이트로 보여 준다
+  const originDesc = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'origin');
+  Object.defineProperty(MessageEvent.prototype, 'origin', {
+    ...originDesc,
+    get() {
+      const origin = originDesc.get.call(this);
+      if (origin !== location.origin) return origin;
+      try {
+        const href = this.source?.location?.href ?? '';
+        return href.startsWith(proxyBase) ? new URL(href.slice(proxyBase.length)).origin : siteOrigin ?? origin;
+      } catch {
+        return siteOrigin ?? origin;
+      }
+    },
+  });
 }
 
 // srcset의 각 주소를 바꾼다. 주소 안에 쉼표가 있을 수 있으므로(예: 이미지 CDN의 'w_100,c_fill') 규격대로
