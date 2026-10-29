@@ -4,6 +4,8 @@
 // 바꾸지 못한 주소(JS가 만든 주소 등)는 워커가 붙이는 CSP 때문에 브라우저가 직접 접속하지 못한다.
 // 접근 키(ACCESS_KEY, wrangler secret)를 아는 사람만 쓸 수 있다. 키가 설정되지 않았으면 아무 요청도 받지 않는다.
 
+import { connect } from 'cloudflare:sockets';
+
 const PREFIX = '/p/';
 
 // 페이지에 넣는 스크립트(clientPatch)의 주소. 키가 들어 있지 않으므로 키 없이 받을 수 있다
@@ -14,8 +16,12 @@ const INITIAL_SCROLL_X = 170;
 
 // 쿠키를 주고받는 사이트(도메인). 서브도메인끼리(gall.·search. 등) 같은 쿠키를 쓴다.
 // 그 밖의 사이트는 쿠키를 버린다. 모든 사이트가 같은 워커 주소를 쓰므로, 다 받으면 브라우저의 쿠키 한도를 넘는다.
-// dcinside는 쿠키(ci_c 등)가 없으면 댓글·검색 요청을 거부한다
-const COOKIE_SITES = ['dcinside.com'];
+// dcinside는 쿠키(ci_c 등)가 없으면 댓글·검색 요청을 거부한다.
+// DuckDuckGo는 워커 IP를 봇으로 보고 그림 고르기 검사를 띄우는데, 통과 기록을 쿠키로 남기므로 쿠키가 없으면 검사가 되풀이된다
+const COOKIE_SITES = ['dcinside.com', 'duckduckgo.com'];
+
+// WebSocket을 여는 페이지의 원래 사이트를 워커에 알리는 쿠키(브라우저 쪽 clientPatch가 넣는다)
+const WS_ORIGIN_COOKIE = '__mm2_ws_origin';
 
 // 주소에 넣기 때문에 URL에 그대로 쓸 수 있는 문자만 허용한다
 const KEY_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
@@ -79,7 +85,7 @@ const DOCUMENT_DESTS = ['document', 'iframe', 'frame', 'embed', 'object'];
 
 // wrangler 번들러가 함수 안에 __name(...) 호출을 끼워 넣으므로 브라우저 쪽에 같은 이름을 만들어 둔다.
 // rewriteSrcset과 쿠키 함수들은 워커와 브라우저가 함께 쓴다
-const CLIENT_JS = `(() => { const __name = (f) => f; const rewriteSrcset = ${rewriteSrcset}; const cookieSite = ${cookieSite}; const siteCookies = ${siteCookies}; const rewriteSetCookie = ${rewriteSetCookie}; (${clientPatch})(${INITIAL_SCROLL_X}, ${JSON.stringify(COOKIE_SITES)}); })();`;
+const CLIENT_JS = `(() => { const __name = (f) => f; const rewriteSrcset = ${rewriteSrcset}; const cookieSite = ${cookieSite}; const siteCookies = ${siteCookies}; const rewriteSetCookie = ${rewriteSetCookie}; (${clientPatch})(${INITIAL_SCROLL_X}, ${JSON.stringify(COOKIE_SITES)}, ${JSON.stringify(WS_ORIGIN_COOKIE)}); })();`;
 // 스크립트가 바뀌면 주소도 바뀌게 해서 브라우저에 남은 예전 스크립트를 쓰지 않게 한다
 const CLIENT_VERSION = [...CLIENT_JS].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36);
 
@@ -145,6 +151,22 @@ export default {
 
     // 쿠키를 주고받는 사이트면 그 도메인(예: 'dcinside.com'), 아니면 null
     const site = cookieSite(target.hostname, COOKIE_SITES);
+
+    // WebSocket(게임 등). 브라우저 쪽(clientPatch)이 ws://·wss:// 주소를 이 워커의 wss://.../p/<키>/http(s)://... 로 바꿔 보낸다
+    if (request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+      const wsHeaders = forwardHeaders(request.headers, target, self.origin, site);
+      // 브라우저는 WebSocket 요청에 Referer를 붙이지 않아 원래 페이지를 알 수 없다. 게임 서버 등은 Origin이 자기 사이트가 아니면
+      // 연결을 거부하므로, clientPatch가 연결 직전에 남긴 쿠키(WS_ORIGIN_COOKIE)로 원래 사이트를 알아낸다
+      const pageOrigin = new RegExp(`(?:^|;\\s*)${WS_ORIGIN_COOKIE}=([^;]+)`).exec(request.headers.get('cookie') ?? '')?.[1];
+      if (!request.headers.get('referer') && pageOrigin) {
+        try {
+          wsHeaders.set('origin', new URL(decodeURIComponent(pageOrigin)).origin);
+        } catch {
+          // 잘못된 값이면 무시한다
+        }
+      }
+      return proxyWebSocket(target, wsHeaders);
+    }
 
     let upstream;
     try {
@@ -281,7 +303,7 @@ function rewriteHtml(response, base, ctx, inject) {
 // 브라우저 안에서 실행되는 코드(문자열로 바꿔 CLIENT_PATH로 내보낸다). 바깥 변수는 rewriteSrcset만 쓸 수 있다.
 // HTML 속의 주소는 워커가 바꾸지만 JS가 실행 중에 만든 주소(이동·iframe·이미지·fetch)는 못 바꾸므로,
 // 여기서 가로채 워커 주소로 바꾼다. 놓친 주소는 워커의 CSP가 막는다
-function clientPatch(initialScrollX, cookieSites) {
+function clientPatch(initialScrollX, cookieSites, wsOriginCookie) {
   // 같은 창에서 두 번 실행되면 단축키 등이 겹치므로 한 번만 한다
   if (window.__mm2) return;
   window.__mm2 = true;
@@ -725,6 +747,34 @@ function clientPatch(initialScrollX, cookieSites) {
     if (!window[name]) continue;
     window[name] = new Proxy(window[name], { construct: (Type, [url, ...rest]) => new Type(px(url), ...rest) });
   }
+  // WebSocket: 'ws://1.2.3.4:444/slither' → 'wss://<워커>/p/<키>/http://1.2.3.4:444/slither'.
+  // 워커는 Upgrade 헤더를 보고 원래 서버와 WebSocket을 맺는다.
+  // WebSocket 요청에는 Referer가 붙지 않으므로, 이 페이지의 원래 사이트를 1분짜리 쿠키로 넘긴다(워커가 Origin으로 쓴다)
+  if (window.WebSocket) {
+    const wsPx = (value) => {
+      try {
+        const url = new URL(String(value), document.baseURI);
+        if (url.protocol === 'ws:') url.protocol = 'http:';
+        else if (url.protocol === 'wss:') url.protocol = 'https:';
+        return px(url.href).replace(/^http/, 'ws');
+      } catch {
+        return value;
+      }
+    };
+    const cookiePath = new URL(proxyBase).pathname;
+    window.WebSocket = new Proxy(window.WebSocket, {
+      construct(Type, [url, ...rest]) {
+        if (siteOrigin) {
+          try {
+            nativeCookie.set.call(document, `${wsOriginCookie}=${encodeURIComponent(siteOrigin)}; Path=${cookiePath}; Max-Age=60; Secure; SameSite=None; Partitioned`);
+          } catch {
+            // 쿠키를 쓸 수 없으면 워커가 워커 주소를 Origin으로 보낸다
+          }
+        }
+        return new Type(wsPx(url), ...rest);
+      },
+    });
+  }
 
   // ===== 창 사이의 메시지 =====
   // 프록시를 거친 창은 모두 워커 주소이므로, postMessage(msg, 'https://gall.dcinside.com') 처럼 원래 사이트를 지정하면
@@ -972,6 +1022,243 @@ function originalPage(referer, proxyOrigin) {
   } catch {
     return null;
   }
+}
+
+// ===== WebSocket =====
+// 브라우저와는 워커가 WebSocket을 맺고, 원래 서버와는 따로 맺어서 메시지를 그대로 넘긴다.
+// 워커의 fetch는 IP 주소(slither.io의 게임 서버 'ws://1.2.3.4:444/slither' 등)로 접속하지 못하므로,
+// 그때는 TCP 소켓을 직접 열어 WebSocket 규격대로 주고받는다
+async function proxyWebSocket(target, headers) {
+  const [client, server] = Object.values(new WebSocketPair());
+  server.accept();
+  const toClient = {
+    message: (data) => {
+      try {
+        server.send(data);
+      } catch {
+        // 브라우저 쪽이 이미 닫혔다
+      }
+    },
+    close: (code, reason) => closeQuietly(server, code, reason),
+  };
+  let upstream;
+  try {
+    upstream = isIpAddress(target.hostname) ? await socketWebSocket(target, headers, toClient) : await fetchWebSocket(target, headers, toClient);
+  } catch (e) {
+    return text(`WebSocket에 연결하지 못했습니다: ${target.origin}\n${e}`, 502);
+  }
+  // 이진 메시지가 Blob으로 오는 런타임이 있다. 바이트로 바꾸는 동안 다음 메시지가 앞지르지 않도록 차례로 보낸다
+  let queue = Promise.resolve();
+  const later = (task) => {
+    queue = queue.then(task).catch(() => {});
+  };
+  server.addEventListener('message', (e) => later(async () => upstream.send(e.data instanceof Blob ? await e.data.arrayBuffer() : e.data)));
+  server.addEventListener('close', (e) => later(() => upstream.close(e.code, e.reason)));
+  server.addEventListener('error', () => upstream.close(1011, ''));
+  return new Response(null, {
+    status: 101,
+    webSocket: client,
+    headers: upstream.protocol ? { 'sec-websocket-protocol': upstream.protocol } : {},
+  });
+}
+
+function isIpAddress(hostname) {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.startsWith('[');
+}
+
+// close()에 넣을 수 없는 코드(1005·1006 등 '받기만 하는' 코드)는 1000으로 바꾼다
+function closeQuietly(ws, code, reason) {
+  try {
+    ws.close(code === 1000 || (code >= 3000 && code < 5000) ? code : 1000, String(reason ?? '').slice(0, 120));
+  } catch {
+    // 이미 닫혔다
+  }
+}
+
+async function fetchWebSocket(target, incoming, toClient) {
+  const headers = new Headers(incoming);
+  // 키·버전·압축은 워커 런타임이 원래 서버와 따로 정한다
+  for (const name of ['sec-websocket-key', 'sec-websocket-version', 'sec-websocket-extensions']) headers.delete(name);
+  headers.set('upgrade', 'websocket');
+  const response = await fetch(target, { headers });
+  const ws = response.webSocket;
+  if (!ws) throw new Error(`HTTP ${response.status}`);
+  ws.accept();
+  ws.addEventListener('message', (e) => toClient.message(e.data));
+  ws.addEventListener('close', (e) => toClient.close(e.code, e.reason));
+  ws.addEventListener('error', () => toClient.close(1011, ''));
+  return {
+    protocol: response.headers.get('sec-websocket-protocol'),
+    send: (data) => {
+      try {
+        ws.send(data);
+      } catch {
+        // 원래 서버 쪽이 이미 닫혔다
+      }
+    },
+    close: (code, reason) => closeQuietly(ws, code, reason),
+  };
+}
+
+async function socketWebSocket(target, incoming, toClient) {
+  const secure = target.protocol === 'https:';
+  const socket = connect(
+    { hostname: target.hostname.replace(/^\[|\]$/g, ''), port: Number(target.port) || (secure ? 443 : 80) },
+    { secureTransport: secure ? 'on' : 'off' },
+  );
+  const writer = socket.writable.getWriter();
+  const reader = socket.readable.getReader();
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  const key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+  const lines = [
+    `GET ${target.pathname}${target.search} HTTP/1.1`,
+    `Host: ${target.host}`,
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    `Sec-WebSocket-Key: ${key}`,
+    'Sec-WebSocket-Version: 13',
+  ];
+  // 서버가 Origin(원래 사이트인지)·User-Agent를 보는 경우가 많다. 압축(extensions)은 직접 풀 수 없으므로 넘기지 않는다
+  for (const name of ['origin', 'user-agent', 'sec-websocket-protocol', 'cookie']) {
+    const value = incoming.get(name);
+    if (value) lines.push(`${name}: ${value}`);
+  }
+  await writer.write(encoder.encode(lines.join('\r\n') + '\r\n\r\n'));
+
+  // 응답 머리(101 Switching Protocols)를 읽는다. 그 뒤에 붙어 온 바이트는 첫 프레임이다
+  let buffer = new Uint8Array(0);
+  let headEnd;
+  while ((headEnd = indexOfHeadEnd(buffer)) < 0) {
+    const { value, done } = await reader.read();
+    if (done || buffer.length > 65536) throw new Error('서버가 WebSocket 응답을 보내지 않았습니다');
+    buffer = concatBytes([buffer, value]);
+  }
+  const head = decoder.decode(buffer.subarray(0, headEnd));
+  if (!/^HTTP\/1\.[01] 101/.test(head)) throw new Error(head.split('\r\n')[0]);
+  buffer = buffer.subarray(headEnd + 4);
+
+  const send = (opcode, payload) => writer.write(wsFrame(opcode, payload)).catch(() => {});
+  const closePayload = (code, reason) => {
+    const valid = code === 1000 || (code >= 3000 && code < 5000) ? code : 1000;
+    return concatBytes([new Uint8Array([valid >> 8, valid & 255]), encoder.encode(String(reason ?? '').slice(0, 120))]);
+  };
+
+  // 서버가 보내는 프레임을 읽어 브라우저로 넘긴다. 나뉘어 온 메시지(continuation)는 합친다
+  (async () => {
+    let parts = [];
+    let messageOpcode = 0;
+    let closed = false;
+    try {
+      for (;;) {
+        const frame = parseWsFrame(buffer);
+        if (!frame) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer = concatBytes([buffer, value]);
+          continue;
+        }
+        buffer = buffer.subarray(frame.size);
+        if (frame.opcode === 8) {
+          const code = frame.payload.length >= 2 ? (frame.payload[0] << 8) | frame.payload[1] : 1000;
+          await send(8, frame.payload.subarray(0, 2));
+          toClient.close(code, decoder.decode(frame.payload.subarray(2)));
+          closed = true;
+          break;
+        }
+        if (frame.opcode === 9) {
+          send(10, frame.payload);
+          continue;
+        }
+        if (frame.opcode === 10) continue;
+        if (frame.opcode !== 0) {
+          messageOpcode = frame.opcode;
+          parts = [];
+        }
+        parts.push(frame.payload);
+        if (frame.fin) {
+          const data = concatBytes(parts);
+          toClient.message(messageOpcode === 1 ? decoder.decode(data) : data.buffer);
+          parts = [];
+        }
+      }
+    } catch {
+      // 연결이 끊어졌다
+    }
+    if (!closed) toClient.close(1000, '');
+    socket.close().catch(() => {});
+  })();
+
+  return {
+    protocol: /^sec-websocket-protocol:\s*(.+)$/im.exec(head)?.[1].trim(),
+    send: (data) => (typeof data === 'string' ? send(1, encoder.encode(data)) : send(2, new Uint8Array(data))),
+    close: (code, reason) => send(8, closePayload(code, reason)),
+  };
+}
+
+// '\r\n\r\n'의 위치
+function indexOfHeadEnd(bytes) {
+  for (let i = 0; i + 3 < bytes.length; i++) {
+    if (bytes[i] === 13 && bytes[i + 1] === 10 && bytes[i + 2] === 13 && bytes[i + 3] === 10) return i;
+  }
+  return -1;
+}
+
+function concatBytes(chunks) {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+// 클라이언트가 보내는 프레임. 규격상 클라이언트 → 서버 프레임은 마스킹해야 한다
+function wsFrame(opcode, payload) {
+  const length = payload.length;
+  const lengthBytes = length < 126 ? 0 : length < 65536 ? 2 : 8;
+  const out = new Uint8Array(2 + lengthBytes + 4 + length);
+  out[0] = 0x80 | opcode;
+  if (length < 126) {
+    out[1] = 0x80 | length;
+  } else if (length < 65536) {
+    out[1] = 0x80 | 126;
+    out[2] = length >> 8;
+    out[3] = length & 255;
+  } else {
+    out[1] = 0x80 | 127;
+    new DataView(out.buffer).setBigUint64(2, BigInt(length));
+  }
+  const maskAt = 2 + lengthBytes;
+  const mask = crypto.getRandomValues(new Uint8Array(4));
+  out.set(mask, maskAt);
+  for (let i = 0; i < length; i++) out[maskAt + 4 + i] = payload[i] ^ mask[i & 3];
+  return out;
+}
+
+// 버퍼 맨 앞의 프레임. 아직 다 오지 않았으면 null
+function parseWsFrame(bytes) {
+  if (bytes.length < 2) return null;
+  const masked = (bytes[1] & 0x80) !== 0;
+  let length = bytes[1] & 0x7f;
+  let offset = 2;
+  if (length === 126) {
+    if (bytes.length < 4) return null;
+    length = (bytes[2] << 8) | bytes[3];
+    offset = 4;
+  } else if (length === 127) {
+    if (bytes.length < 10) return null;
+    length = Number(new DataView(bytes.buffer, bytes.byteOffset + 2, 8).getBigUint64(0));
+    offset = 10;
+  }
+  const maskAt = offset;
+  if (masked) offset += 4;
+  if (bytes.length < offset + length) return null;
+  const payload = bytes.slice(offset, offset + length);
+  if (masked) for (let i = 0; i < length; i++) payload[i] ^= bytes[maskAt + (i & 3)];
+  return { fin: (bytes[0] & 0x80) !== 0, opcode: bytes[0] & 0x0f, payload, size: offset + length };
 }
 
 function text(body, status) {
