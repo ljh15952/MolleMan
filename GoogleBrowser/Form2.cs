@@ -40,6 +40,9 @@ namespace GoogleBrowser
         private const int ProxyPort = 8899;
         private System.Diagnostics.Process _echProxy;
 
+        // 시작/홈 페이지: Worker를 거쳐 사이트를 여는 웹 UI(여기서 🔑 키 입력 후 브라우징)
+        private const string HomeUrl = "https://ljh15952.github.io/MolleMan/";
+
         [StructLayout(LayoutKind.Sequential)]
         struct INPUT
         {
@@ -165,7 +168,7 @@ namespace GoogleBrowser
                 }
                 else
                 {
-                    NavigateTo("https://www.bing.com/");
+                    NavigateTo(HomeUrl);
                 }
             }
             catch (Exception ex)
