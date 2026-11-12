@@ -93,6 +93,15 @@ namespace GoogleBrowser
         {
             try
             {
+                // DNS는 Cloudflare 1.1.1.1(DNS over HTTPS)로만 조회한다. 실패해도 OS DNS로 돌아가지 않는다
+                webView21.CreationProperties = new CoreWebView2CreationProperties
+                {
+                    AdditionalBrowserArguments =
+                        "--enable-features=DnsOverHttps<DoHTrial " +
+                        "--force-fieldtrials=DoHTrial/Group1 " +
+                        "--force-fieldtrial-params=DoHTrial.Group1:Fallback/false/Templates/https%3A%2F%2F1.1.1.1%2Fdns-query"
+                };
+
                 await webView21.EnsureCoreWebView2Async();
 
                 // ===== WebView2 이벤트 =====
