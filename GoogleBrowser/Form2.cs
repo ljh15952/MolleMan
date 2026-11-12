@@ -33,6 +33,13 @@ namespace GoogleBrowser
 
         private string _pendingUrl;
 
+        // 로컬 ECH/DoH 프록시: WebView2의 모든 트래픽을 루프백의 이 프록시로 보내고,
+        // 프록시가 DoH로 이름을 풀어 상류로 ECH 핸드셰이크를 한다(실제 SNI 암호화).
+        // 관리 기기에서 Chromium 자체 DoH가 정책으로 막혀도 이 경로는 영향받지 않는다.
+        private const string ProxyHost = "127.0.0.1";
+        private const int ProxyPort = 8899;
+        private System.Diagnostics.Process _echProxy;
+
         [StructLayout(LayoutKind.Sequential)]
         struct INPUT
         {
@@ -93,13 +100,12 @@ namespace GoogleBrowser
         {
             try
             {
-                // DNS는 Cloudflare 1.1.1.1(DNS over HTTPS)로만 조회한다. 실패해도 OS DNS로 돌아가지 않는다
+                // 로컬 ECH/DoH 프록시를 먼저 띄우고, WebView2의 모든 요청을 이 프록시로 보낸다.
+                // (관리 기기에선 브라우저 자체 DoH/ECH가 정책으로 막히므로, 네트워크를 프록시가 대신한다.)
+                StartEchProxy();
                 webView21.CreationProperties = new CoreWebView2CreationProperties
                 {
-                    AdditionalBrowserArguments =
-                        "--enable-features=DnsOverHttps<DoHTrial " +
-                        "--force-fieldtrials=DoHTrial/Group1 " +
-                        "--force-fieldtrial-params=DoHTrial.Group1:Fallback/false/Templates/https%3A%2F%2F1.1.1.1%2Fdns-query"
+                    AdditionalBrowserArguments = "--proxy-server=" + ProxyHost + ":" + ProxyPort
                 };
 
                 await webView21.EnsureCoreWebView2Async();
@@ -114,6 +120,13 @@ namespace GoogleBrowser
                 
                 // ===== 핵심: Web 안에서 키를 잡고 C#으로 전달 =====
                 webView21.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
+
+                // 로컬 프록시가 내보내는 로컬 CA 서명 인증서를 수용한다(시스템 인증서 저장소는
+                // 건드리지 않음). 모든 트래픽이 우리 프록시를 거치고, 상류 인증서는 프록시가 정상 검증한다.
+                webView21.CoreWebView2.ServerCertificateErrorDetected += (s, args) =>
+                {
+                    args.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
+                };
 
                 // 모든 문서 로드 시점에 스크립트 자동 주입
                 // (페이지에 포커스가 있어도 Q/W/A/S를 안정적으로 감지)
@@ -159,6 +172,65 @@ namespace GoogleBrowser
             {
                 toolStripStatusLabel1.Text = "WebView2初期化エラー: " + ex.Message;
             }
+        }
+
+        // ===== 로컬 ECH/DoH 프록시 =====
+        // 앱과 같은 폴더의 echproxy.exe를 백그라운드로 실행한다. 이미 떠 있으면 재사용한다.
+        private void StartEchProxy()
+        {
+            try
+            {
+                if (PortOpen(ProxyHost, ProxyPort)) return; // 이미 실행 중이면 그대로 사용
+
+                string exe = System.IO.Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "echproxy.exe");
+                if (!System.IO.File.Exists(exe))
+                {
+                    toolStripStatusLabel1.Text = "echproxy.exe 없음(앱 폴더에 두세요): " + exe;
+                    return;
+                }
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = "-addr " + ProxyHost + ":" + ProxyPort,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                _echProxy = System.Diagnostics.Process.Start(psi);
+                this.FormClosed += (s, e) => StopEchProxy();
+
+                // 프록시가 포트를 열 때까지 잠깐 기다린다(최대 ~2초). 첫 탐색 실패 방지.
+                for (int i = 0; i < 40 && !PortOpen(ProxyHost, ProxyPort); i++)
+                    System.Threading.Thread.Sleep(50);
+            }
+            catch (Exception ex)
+            {
+                toolStripStatusLabel1.Text = "echproxy 실행 실패: " + ex.Message;
+            }
+        }
+
+        private void StopEchProxy()
+        {
+            try
+            {
+                if (_echProxy != null && !_echProxy.HasExited)
+                    _echProxy.Kill();
+            }
+            catch { }
+        }
+
+        private static bool PortOpen(string host, int port)
+        {
+            try
+            {
+                using (var c = new System.Net.Sockets.TcpClient())
+                {
+                    var ar = c.BeginConnect(host, port, null, null);
+                    if (ar.AsyncWaitHandle.WaitOne(300) && c.Connected) return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         // Web -> C# 메시지 수신

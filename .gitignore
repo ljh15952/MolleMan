@@ -36,3 +36,9 @@ node_modules/
 ## Cloudflare Worker 로컬 실행 캐시
 .wrangler/
 .dev.vars
+
+## 포터블 Go 툴체인·빌드 캐시(로컬 프록시 빌드용, 저장소에 올리지 않음)
+.tools/
+
+## Go 로컬 프록시 빌드 산출물
+echproxy/echproxy.exe

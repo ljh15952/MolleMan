@@ -120,3 +120,4 @@ iframe과 프록시로 띄우는 방식이라 아래 제한이 있습니다.
 - **서버 버전**: 서버에서 헤드리스 Chromium을 실행해 화면을 스트리밍하던 버전(모든 사이트와 Q/W/A/S 단축키 지원, 서버 필요)은 커밋 `fcc7f52`까지의 git 기록에 남아 있습니다.
 - **WinForms 버전**: `GoogleBrowser/` 폴더에 Windows 전용 WinForms + WebView2 버전이 그대로 남아 있습니다.
   Visual Studio에서 `GoogleBrowser.sln`을 열어 빌드할 수 있습니다(.NET Framework 4.6.2, WebView2 Runtime 필요).
+  - **ECH(SNI 암호화)**: 이 버전은 시작 시 로컬 프록시([echproxy/](echproxy))를 띄워 모든 트래픽을 거치게 하고, 프록시가 DoH 조회 + 상류 ECH 핸드셰이크로 실제 SNI를 암호화합니다. 관리(도메인 가입) 기기에서 브라우저 자체 DoH가 막혀 있어도 동작합니다. 빌드한 `echproxy.exe`를 `GoogleBrowser.exe`와 같은 폴더에 두세요. 자세한 내용은 [echproxy/README.md](echproxy/README.md).
